@@ -1,8 +1,10 @@
 package com.overzealouspelican.awsui.frame;
 
 import com.overzealouspelican.awsui.panel.CodePipelinePanel;
+import com.overzealouspelican.awsui.panel.LogsPanel;
 import com.overzealouspelican.awsui.panel.SettingsEditorPanel;
 import com.overzealouspelican.awsui.service.AwsProfileService;
+import com.overzealouspelican.awsui.service.CloudWatchLogsService;
 import com.overzealouspelican.awsui.service.CodePipelineService;
 import com.overzealouspelican.awsui.service.SettingsService;
 import com.overzealouspelican.awsui.util.UITheme;
@@ -21,12 +23,14 @@ public class MainFrame extends JFrame {
     private static final String VIEW_HOME = "home";
     private static final String VIEW_SETTINGS = "settings";
     private static final String VIEW_PIPELINES = "pipelines";
+    private static final String VIEW_LOGS = "logs";
 
     private final SettingsService settingsService;
     private final AwsProfileService awsProfileService;
     private final CardLayout contentLayout;
     private final JPanel contentContainer;
     private CodePipelinePanel pipelinePanel;
+    private LogsPanel logsPanel;
 
     public MainFrame(SettingsService settingsService) {
         super("AWS UI");
@@ -47,9 +51,11 @@ public class MainFrame extends JFrame {
         add(createToolbar(), BorderLayout.NORTH);
 
         pipelinePanel = new CodePipelinePanel(new CodePipelineService(), settingsService);
+        logsPanel = new LogsPanel(new CloudWatchLogsService(), settingsService);
         contentContainer.add(createEmptyCanvas(), VIEW_HOME);
         contentContainer.add(new SettingsEditorPanel(settingsService), VIEW_SETTINGS);
         contentContainer.add(pipelinePanel, VIEW_PIPELINES);
+        contentContainer.add(logsPanel, VIEW_LOGS);
         add(contentContainer, BorderLayout.CENTER);
         showHomeView();
     }
@@ -65,14 +71,17 @@ public class MainFrame extends JFrame {
         JMenu viewMenu = new JMenu("View");
         JMenuItem homeItem = new JMenuItem("Home");
         JMenuItem pipelinesItem = new JMenuItem("Pipelines");
+        JMenuItem logsItem = new JMenuItem("Logs");
         JMenuItem settingsItem = new JMenuItem("Settings");
 
         homeItem.addActionListener(e -> showHomeView());
         pipelinesItem.addActionListener(e -> showPipelinesView());
+        logsItem.addActionListener(e -> showLogsView());
         settingsItem.addActionListener(e -> showSettingsView());
 
         viewMenu.add(homeItem);
         viewMenu.add(pipelinesItem);
+        viewMenu.add(logsItem);
         viewMenu.addSeparator();
         viewMenu.add(settingsItem);
 
@@ -118,12 +127,17 @@ public class MainFrame extends JFrame {
         contentPanel.setBorder(UITheme.contentPadding());
         contentPanel.setBackground(UIManager.getColor("Panel.background"));
 
-        JPanel cardsPanel = new JPanel(new GridLayout(1, 2, UITheme.SPACING_LG, UITheme.SPACING_LG));
+        JPanel cardsPanel = new JPanel(new GridLayout(1, 3, UITheme.SPACING_LG, UITheme.SPACING_LG));
         cardsPanel.setOpaque(false);
         cardsPanel.add(createNavigationCard(
             "Pipelines",
             "Monitor and manage AWS CodePipelines",
             this::showPipelinesView
+        ));
+        cardsPanel.add(createNavigationCard(
+            "Logs",
+            "Search CloudWatch log groups and streams",
+            this::showLogsView
         ));
         cardsPanel.add(createNavigationCard(
             "Settings",
@@ -219,6 +233,7 @@ public class MainFrame extends JFrame {
             if (selected != null) {
                 settingsService.saveAwsProfile(selected);
                 pipelinePanel.setProfile(selected);
+                logsPanel.setProfile(selected);
             }
         });
 
@@ -232,6 +247,11 @@ public class MainFrame extends JFrame {
     private void showPipelinesView() {
         contentLayout.show(contentContainer, VIEW_PIPELINES);
         pipelinePanel.refresh();
+    }
+
+    private void showLogsView() {
+        contentLayout.show(contentContainer, VIEW_LOGS);
+        logsPanel.refresh();
     }
 
     private void showSettingsView() {

@@ -41,10 +41,19 @@
             <artifactId>flatlaf-intellij-themes</artifactId>
             <version>3.6.2</version>
         </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.11.0</version>
+        </dependency>
         <!-- AWS SDK v2 -->
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>codepipeline</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>cloudwatchlogs</artifactId>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
