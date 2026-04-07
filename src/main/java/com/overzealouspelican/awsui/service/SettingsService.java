@@ -16,6 +16,7 @@ public class SettingsService {
     private static final Preferences PREFS = Preferences.userNodeForPackage(SettingsService.class);
     private static final String THEME_KEY = "theme";
     private static final String DEFAULT_THEME = "FlatLaf IntelliJ";
+    private static final String AWS_PROFILE_KEY = "aws_profile";
 
     public static class ThemeOption {
         private final String displayName;
@@ -63,6 +64,14 @@ public class SettingsService {
 
     public String getDefaultTheme() {
         return DEFAULT_THEME;
+    }
+
+    public void saveAwsProfile(String profileName) {
+        PREFS.put(AWS_PROFILE_KEY, profileName);
+    }
+
+    public String getSavedAwsProfile() {
+        return PREFS.get(AWS_PROFILE_KEY, null);
     }
 
     public void applyTheme(String themeClassName) throws Exception {
