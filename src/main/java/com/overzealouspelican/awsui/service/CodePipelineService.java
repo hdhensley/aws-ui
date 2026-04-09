@@ -8,6 +8,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.codepipeline.CodePipelineClient;
 import software.amazon.awssdk.services.codepipeline.model.PipelineExecutionStatus;
 import software.amazon.awssdk.services.codepipeline.model.PipelineExecutionSummary;
+import software.amazon.awssdk.services.codepipeline.model.StageState;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -91,6 +92,21 @@ public class CodePipelineService {
                 .pipelineName(pipelineName)
                 .pipelineExecutionId(executionId)
                 .abandon(false));
+        }
+    }
+
+    public List<String> getPipelinePhases(String profileName, String pipelineName) {
+        String region = resolveRegion(profileName);
+        try (CodePipelineClient client = buildClient(profileName, region)) {
+            var state = client.getPipelineState(r -> r.name(pipelineName));
+            List<String> phases = new ArrayList<>();
+            for (StageState stage : state.stageStates()) {
+                String status = stage.latestExecution() == null
+                    ? "-"
+                    : stage.latestExecution().statusAsString();
+                phases.add(stage.stageName() + ": " + status);
+            }
+            return phases;
         }
     }
 

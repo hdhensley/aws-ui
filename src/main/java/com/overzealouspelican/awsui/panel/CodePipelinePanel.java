@@ -5,6 +5,7 @@ import com.overzealouspelican.awsui.service.SettingsService;
 import com.overzealouspelican.awsui.util.UITheme;
 
 import javax.swing.*;
+import javax.swing.RowFilter;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.TableCellEditor;
@@ -14,6 +15,7 @@ import java.awt.*;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -40,10 +42,15 @@ public class CodePipelinePanel extends JPanel {
     private volatile boolean isLoading = false;
 
     private PipelineTableModel tableModel;
+    private TableRowSorter<PipelineTableModel> rowSorter;
+    private JTable pipelineTable;
+    private JTextArea pipelineDetailsArea;
+    private JTextField pipelineSearchField;
     private JLabel errorLabel;
     private JLabel statusLabel;
     private CardLayout stateLayout;
     private JPanel stateContainer;
+    private int detailsRequestVersion = 0;
 
     public CodePipelinePanel(CodePipelineService service, SettingsService settingsService) {
         this.service = service;
@@ -69,7 +76,7 @@ public class CodePipelinePanel extends JPanel {
 
     private void initializePanel() {
         setLayout(new BorderLayout());
-        setBackground(UIManager.getColor("Panel.background"));
+        setBackground(UITheme.panelBackground());
 
         add(createHeader(), BorderLayout.NORTH);
 
@@ -85,14 +92,36 @@ public class CodePipelinePanel extends JPanel {
 
     private JComponent createHeader() {
         JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(UIManager.getColor("Panel.background"));
+        header.setBackground(UITheme.surfaceBackground());
         header.setBorder(javax.swing.BorderFactory.createCompoundBorder(
             javax.swing.BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Component.borderColor")),
             javax.swing.BorderFactory.createEmptyBorder(UITheme.SPACING_SM, UITheme.SPACING_LG, UITheme.SPACING_SM, UITheme.SPACING_LG)
         ));
 
+        JPanel leftPanel = new JPanel();
+        leftPanel.setLayout(new BoxLayout(leftPanel, BoxLayout.Y_AXIS));
+        leftPanel.setOpaque(false);
+
         JLabel title = new JLabel("CodePipelines");
         title.setFont(title.getFont().deriveFont(Font.BOLD, UITheme.FONT_SIZE_TITLE));
+
+        JPanel searchPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, UITheme.SPACING_SM, 0));
+        searchPanel.setOpaque(false);
+        JLabel searchLabel = new JLabel("Search:");
+        pipelineSearchField = new JTextField(24);
+        JButton clearSearchButton = new JButton("Clear");
+        pipelineSearchField.addActionListener(e -> applyPipelineNameFilter());
+        clearSearchButton.addActionListener(e -> {
+            pipelineSearchField.setText("");
+            applyPipelineNameFilter();
+        });
+        searchPanel.add(searchLabel);
+        searchPanel.add(pipelineSearchField);
+        searchPanel.add(clearSearchButton);
+
+        leftPanel.add(title);
+        leftPanel.add(Box.createVerticalStrut(UITheme.SPACING_SM));
+        leftPanel.add(searchPanel);
 
         JPanel rightPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, UITheme.SPACING_SM, 0));
         rightPanel.setOpaque(false);
@@ -107,14 +136,14 @@ public class CodePipelinePanel extends JPanel {
         rightPanel.add(statusLabel);
         rightPanel.add(refreshButton);
 
-        header.add(title, BorderLayout.WEST);
+        header.add(leftPanel, BorderLayout.WEST);
         header.add(rightPanel, BorderLayout.EAST);
         return header;
     }
 
     private JPanel createLoadingPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
         JLabel label = new JLabel("Loading pipelines…");
         label.setForeground(UIManager.getColor("Label.disabledForeground"));
         panel.add(label);
@@ -123,7 +152,7 @@ public class CodePipelinePanel extends JPanel {
 
     private JPanel createErrorPanel() {
         JPanel wrapper = new JPanel(new GridBagLayout());
-        wrapper.setBackground(UIManager.getColor("Panel.background"));
+        wrapper.setBackground(UITheme.panelBackground());
 
         JPanel inner = new JPanel();
         inner.setLayout(new BoxLayout(inner, BoxLayout.Y_AXIS));
@@ -144,11 +173,11 @@ public class CodePipelinePanel extends JPanel {
         return wrapper;
     }
 
-    private JScrollPane createTablePanel() {
+    private JComponent createTablePanel() {
         tableModel = new PipelineTableModel();
-        JTable table = new JTable(tableModel);
+        pipelineTable = new JTable(tableModel);
 
-        TableRowSorter<PipelineTableModel> rowSorter = new TableRowSorter<>(tableModel);
+        rowSorter = new TableRowSorter<>(tableModel);
         rowSorter.setComparator(COL_NAME, String.CASE_INSENSITIVE_ORDER);
         rowSorter.setComparator(COL_LAST_DEPLOYED, Comparator
             .nullsLast((a, b) -> {
@@ -168,32 +197,74 @@ public class CodePipelinePanel extends JPanel {
         rowSorter.setSortable(COL_HISTORY, false);
         rowSorter.setSortable(COL_CONTEXT, false);
         rowSorter.setSortable(COL_ACTIONS, false);
-        table.setRowSorter(rowSorter);
+        pipelineTable.setRowSorter(rowSorter);
 
-        table.setRowHeight(40);
-        table.setShowHorizontalLines(false);
-        table.setShowVerticalLines(false);
-        table.setFillsViewportHeight(true);
-        table.getTableHeader().setReorderingAllowed(false);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        pipelineTable.setRowHeight(40);
+        pipelineTable.setShowHorizontalLines(false);
+        pipelineTable.setShowVerticalLines(false);
+        pipelineTable.setFillsViewportHeight(true);
+        pipelineTable.getTableHeader().setReorderingAllowed(false);
+        pipelineTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
 
-        table.getColumnModel().getColumn(COL_NAME).setPreferredWidth(280);
-        table.getColumnModel().getColumn(COL_HISTORY).setPreferredWidth(130);
-        table.getColumnModel().getColumn(COL_HISTORY).setMaxWidth(150);
-        table.getColumnModel().getColumn(COL_CONTEXT).setPreferredWidth(200);
-        table.getColumnModel().getColumn(COL_LAST_DEPLOYED).setPreferredWidth(190);
-        table.getColumnModel().getColumn(COL_LAST_DEPLOYED).setMaxWidth(220);
-        table.getColumnModel().getColumn(COL_ACTIONS).setPreferredWidth(170);
-        table.getColumnModel().getColumn(COL_ACTIONS).setMaxWidth(190);
+        pipelineTable.getColumnModel().getColumn(COL_NAME).setPreferredWidth(280);
+        pipelineTable.getColumnModel().getColumn(COL_HISTORY).setPreferredWidth(130);
+        pipelineTable.getColumnModel().getColumn(COL_HISTORY).setMaxWidth(150);
+        pipelineTable.getColumnModel().getColumn(COL_CONTEXT).setPreferredWidth(200);
+        pipelineTable.getColumnModel().getColumn(COL_LAST_DEPLOYED).setPreferredWidth(190);
+        pipelineTable.getColumnModel().getColumn(COL_LAST_DEPLOYED).setMaxWidth(220);
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setPreferredWidth(170);
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setMaxWidth(190);
 
-        table.getColumnModel().getColumn(COL_HISTORY).setCellRenderer(new HistoryCellRenderer());
-        table.getColumnModel().getColumn(COL_CONTEXT).setCellRenderer(new ContextCellRenderer());
-        table.getColumnModel().getColumn(COL_ACTIONS).setCellRenderer(new ActionsRenderer());
-        table.getColumnModel().getColumn(COL_ACTIONS).setCellEditor(new ActionsEditor());
+        pipelineTable.getColumnModel().getColumn(COL_HISTORY).setCellRenderer(new HistoryCellRenderer());
+        pipelineTable.getColumnModel().getColumn(COL_CONTEXT).setCellRenderer(new ContextCellRenderer());
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setCellRenderer(new ActionsRenderer());
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setCellEditor(new ActionsEditor());
 
-        JScrollPane scrollPane = new JScrollPane(table);
-        scrollPane.setBorder(null);
-        return scrollPane;
+        pipelineTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                updatePipelineDetails();
+            }
+        });
+
+        JScrollPane tableScrollPane = new JScrollPane(pipelineTable);
+        tableScrollPane.setBorder(null);
+
+        pipelineDetailsArea = new JTextArea();
+        pipelineDetailsArea.setEditable(false);
+        pipelineDetailsArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        pipelineDetailsArea.setRows(8);
+
+        JPanel detailsPanel = new JPanel(new BorderLayout());
+        detailsPanel.setBackground(UITheme.surfaceBackground());
+        detailsPanel.setBorder(BorderFactory.createTitledBorder("Pipeline Details"));
+        detailsPanel.add(new JScrollPane(pipelineDetailsArea), BorderLayout.CENTER);
+
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScrollPane, detailsPanel);
+        splitPane.setResizeWeight(0.72);
+        splitPane.setDividerSize(8);
+
+        return splitPane;
+    }
+
+    private void applyPipelineNameFilter() {
+        if (rowSorter == null) {
+            return;
+        }
+
+        String query = pipelineSearchField == null ? "" : pipelineSearchField.getText().trim();
+        if (query.isBlank()) {
+            rowSorter.setRowFilter(null);
+            return;
+        }
+
+        String needle = query.toLowerCase(Locale.ROOT);
+        rowSorter.setRowFilter(new RowFilter<>() {
+            @Override
+            public boolean include(Entry<? extends PipelineTableModel, ? extends Integer> entry) {
+                Object value = entry.getValue(COL_NAME);
+                return value != null && value.toString().toLowerCase(Locale.ROOT).contains(needle);
+            }
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -227,6 +298,10 @@ public class CodePipelinePanel extends JPanel {
                 try {
                     List<CodePipelineService.PipelineRow> rows = get();
                     tableModel.setRows(rows);
+                    if (pipelineDetailsArea != null) {
+                        pipelineDetailsArea.setText("");
+                    }
+                    detailsRequestVersion++;
                     stateLayout.show(stateContainer, STATE_TABLE);
                     String count = rows.size() + " pipeline" + (rows.size() == 1 ? "" : "s");
                     statusLabel.setText("Profile: " + currentProfile + "  ·  " + count);
@@ -245,6 +320,72 @@ public class CodePipelinePanel extends JPanel {
         errorLabel.setText(message);
         stateLayout.show(stateContainer, STATE_ERROR);
         statusLabel.setText("Error");
+    }
+
+    private void updatePipelineDetails() {
+        if (pipelineDetailsArea == null || pipelineTable == null) {
+            return;
+        }
+
+        int selectedRow = pipelineTable.getSelectedRow();
+        if (selectedRow < 0) {
+            detailsRequestVersion++;
+            pipelineDetailsArea.setText("");
+            return;
+        }
+
+        int modelRow = pipelineTable.convertRowIndexToModel(selectedRow);
+        CodePipelineService.PipelineRow row = tableModel.rows.get(modelRow);
+
+        int requestVersion = ++detailsRequestVersion;
+        pipelineDetailsArea.setText(buildPipelineDetailsText(row, "Loading..."));
+        loadPipelinePhases(row, requestVersion);
+    }
+
+    private void loadPipelinePhases(CodePipelineService.PipelineRow row, int requestVersion) {
+        String profile = currentProfile;
+        new SwingWorker<List<String>, Void>() {
+            @Override
+            protected List<String> doInBackground() {
+                return service.getPipelinePhases(profile, row.name());
+            }
+
+            @Override
+            protected void done() {
+                if (requestVersion != detailsRequestVersion) {
+                    return;
+                }
+
+                try {
+                    List<String> phases = get();
+                    String phasesText = phases.isEmpty()
+                        ? "-"
+                        : String.join(System.lineSeparator() + "  ", phases);
+                    pipelineDetailsArea.setText(buildPipelineDetailsText(row, phasesText));
+                    pipelineDetailsArea.setCaretPosition(0);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    pipelineDetailsArea.setText(buildPipelineDetailsText(row, "Load interrupted"));
+                } catch (ExecutionException e) {
+                    pipelineDetailsArea.setText(buildPipelineDetailsText(row, "Failed to load phases"));
+                }
+            }
+        }.execute();
+    }
+
+    private String buildPipelineDetailsText(CodePipelineService.PipelineRow row, String phasesText) {
+        String recentRuns = row.recentStatuses().isEmpty()
+            ? "-"
+            : String.join(", ", row.recentStatuses());
+
+        return "Name: " + row.name() + System.lineSeparator()
+            + "Region: " + row.region() + System.lineSeparator()
+            + "Current Status: " + row.status() + System.lineSeparator()
+            + "Last Deployed: " + row.lastDeployedAt() + System.lineSeparator()
+            + "Current Execution ID: " + (row.inProgressExecutionId() == null ? "-" : row.inProgressExecutionId()) + System.lineSeparator()
+            + "Recent Runs (newest first): " + recentRuns + System.lineSeparator()
+            + "Phases:" + System.lineSeparator()
+            + "  " + phasesText;
     }
 
     // -------------------------------------------------------------------------

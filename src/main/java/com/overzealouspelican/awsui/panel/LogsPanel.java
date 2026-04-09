@@ -29,6 +29,9 @@ import java.util.concurrent.ExecutionException;
  */
 public class LogsPanel extends JPanel {
 
+    private static final Dimension STANDARD_FILTER_INPUT_SIZE = new Dimension(240, 30);
+    private static final Dimension STANDARD_FILTER_BUTTON_SIZE = new Dimension(130, 30);
+
     private static final CloudWatchLogsService.LogStreamOption ALL_STREAMS_OPTION =
         new CloudWatchLogsService.LogStreamOption("", "All streams", null);
     private static final String ALL_JSON_LOG_STREAMS = "All logStream values";
@@ -74,6 +77,9 @@ public class LogsPanel extends JPanel {
     public void setProfile(String profile) {
         this.currentProfile = profile;
         resetFiltersForProfileChange();
+        if (statusLabel != null) {
+            statusLabel.setText("Switching profile...");
+        }
         refreshLogGroups();
     }
 
@@ -119,13 +125,13 @@ public class LogsPanel extends JPanel {
             displayLayout.show(displayPanel, DISPLAY_TEXT);
         }
         if (statusLabel != null) {
-            statusLabel.setText("");
+            statusLabel.setText("Switching profile...");
         }
     }
 
     private void initializePanel() {
         setLayout(new BorderLayout());
-        setBackground(UIManager.getColor("Panel.background"));
+        setBackground(UITheme.panelBackground());
 
         add(createHeader(), BorderLayout.NORTH);
         add(createMainContent(), BorderLayout.CENTER);
@@ -135,7 +141,7 @@ public class LogsPanel extends JPanel {
 
     private JComponent createHeader() {
         JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(UIManager.getColor("Panel.background"));
+        header.setBackground(UITheme.surfaceBackground());
         header.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Component.borderColor")),
             BorderFactory.createEmptyBorder(UITheme.SPACING_SM, UITheme.SPACING_LG, UITheme.SPACING_SM, UITheme.SPACING_LG)
@@ -156,7 +162,7 @@ public class LogsPanel extends JPanel {
     private JComponent createMainContent() {
         JPanel panel = new JPanel(new BorderLayout(UITheme.SPACING_SM, UITheme.SPACING_SM));
         panel.setBorder(UITheme.contentPadding());
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
 
         panel.add(createFilterBar(), BorderLayout.NORTH);
         panel.add(createLogsDisplay(), BorderLayout.CENTER);
@@ -166,7 +172,7 @@ public class LogsPanel extends JPanel {
 
     private JComponent createFilterBar() {
         JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
 
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(0, 0, UITheme.SPACING_SM, UITheme.SPACING_SM);
@@ -179,18 +185,22 @@ public class LogsPanel extends JPanel {
         panel.add(new JLabel("Log Group Search:"), gbc);
 
         groupSearchField = new JTextField();
+        applyStandardFilterInputSize(groupSearchField);
         gbc.gridx = 1;
-        gbc.weightx = 0.3;
+        gbc.weightx = 0.5;
         panel.add(groupSearchField, gbc);
 
         refreshGroupsButton = new JButton("Find Groups");
+        applyStandardButtonSize(refreshGroupsButton);
         gbc.gridx = 2;
         gbc.weightx = 0;
+        gbc.anchor = GridBagConstraints.CENTER;
         panel.add(refreshGroupsButton, gbc);
 
         groupComboBox = new JComboBox<>();
+        applyStandardFilterInputSize(groupComboBox);
         gbc.gridx = 3;
-        gbc.weightx = 0.7;
+        gbc.weightx = 0.5;
         panel.add(groupComboBox, gbc);
 
         // Log stream search + select
@@ -200,18 +210,22 @@ public class LogsPanel extends JPanel {
         panel.add(new JLabel("Log Stream Search:"), gbc);
 
         streamSearchField = new JTextField();
+        applyStandardFilterInputSize(streamSearchField);
         gbc.gridx = 1;
-        gbc.weightx = 0.3;
+        gbc.weightx = 0.5;
         panel.add(streamSearchField, gbc);
 
         refreshStreamsButton = new JButton("Find Streams");
+        applyStandardButtonSize(refreshStreamsButton);
         gbc.gridx = 2;
         gbc.weightx = 0;
+        gbc.anchor = GridBagConstraints.CENTER;
         panel.add(refreshStreamsButton, gbc);
 
         streamComboBox = new JComboBox<>();
+        applyStandardFilterInputSize(streamComboBox);
         gbc.gridx = 3;
-        gbc.weightx = 0.7;
+        gbc.weightx = 0.5;
         panel.add(streamComboBox, gbc);
 
         // Timeframe + load logs
@@ -230,16 +244,23 @@ public class LogsPanel extends JPanel {
             new TimeframeOption("Last 6 hours", Duration.ofHours(6)),
             new TimeframeOption("Last 24 hours", Duration.ofHours(24))
         });
+        applyStandardFilterInputSize(timeframeComboBox);
         timeframeComboBox.setSelectedIndex(2);
         gbc.gridx = 1;
-        gbc.weightx = 0.3;
+        gbc.weightx = 0.5;
         panel.add(timeframeComboBox, gbc);
 
         loadLogsButton = new JButton("Load Logs");
         UITheme.stylePrimaryButton(loadLogsButton);
+        applyStandardButtonSize(loadLogsButton);
         gbc.gridx = 2;
         gbc.weightx = 0;
+        gbc.anchor = GridBagConstraints.CENTER;
         panel.add(loadLogsButton, gbc);
+
+        gbc.gridx = 3;
+        gbc.weightx = 0.5;
+        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
 
         gbc.gridx = 0;
         gbc.gridy = 3;
@@ -249,9 +270,18 @@ public class LogsPanel extends JPanel {
 
         jsonLogStreamFilterComboBox = new JComboBox<>(new String[]{ALL_JSON_LOG_STREAMS});
         jsonLogStreamFilterComboBox.setEnabled(false);
+        applyStandardFilterInputSize(jsonLogStreamFilterComboBox);
         gbc.gridx = 1;
-        gbc.weightx = 0.3;
+        gbc.weightx = 0.5;
         panel.add(jsonLogStreamFilterComboBox, gbc);
+
+        gbc.gridx = 2;
+        gbc.weightx = 0;
+        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_BUTTON_SIZE.width), gbc);
+
+        gbc.gridx = 3;
+        gbc.weightx = 0.5;
+        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
 
         gbc.gridx = 0;
         gbc.gridy = 4;
@@ -260,6 +290,7 @@ public class LogsPanel extends JPanel {
         panel.add(new JLabel("Client Search:"), gbc);
 
         clientSearchField = new JTextField();
+        applyStandardFilterInputSize(clientSearchField);
         gbc.gridx = 1;
         gbc.weightx = 0.5;
         panel.add(clientSearchField, gbc);
@@ -272,13 +303,26 @@ public class LogsPanel extends JPanel {
         searchButtonsPanel.add(clearClientSearchButton);
 
         gbc.gridx = 2;
-        gbc.gridwidth = 2;
         gbc.weightx = 0;
+        gbc.anchor = GridBagConstraints.CENTER;
         panel.add(searchButtonsPanel, gbc);
-        gbc.gridwidth = 1;
+
+        gbc.gridx = 3;
+        gbc.weightx = 0.5;
+        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
 
         wireActions();
         return panel;
+    }
+
+    private void applyStandardFilterInputSize(JComponent component) {
+        component.setPreferredSize(STANDARD_FILTER_INPUT_SIZE);
+        component.setMinimumSize(STANDARD_FILTER_INPUT_SIZE);
+    }
+
+    private void applyStandardButtonSize(AbstractButton button) {
+        button.setPreferredSize(STANDARD_FILTER_BUTTON_SIZE);
+        button.setMinimumSize(STANDARD_FILTER_BUTTON_SIZE);
     }
 
     private JComponent createLogsDisplay() {
@@ -316,7 +360,17 @@ public class LogsPanel extends JPanel {
 
     private void wireActions() {
         refreshGroupsButton.addActionListener(e -> refreshLogGroups());
-        refreshStreamsButton.addActionListener(e -> refreshLogStreams());
+        groupSearchField.addActionListener(e -> {
+            if (refreshGroupsButton.isEnabled()) {
+                refreshGroupsButton.doClick();
+            }
+        });
+        refreshStreamsButton.addActionListener(e -> refreshLogStreams(false));
+        streamSearchField.addActionListener(e -> {
+            if (refreshStreamsButton.isEnabled()) {
+                refreshStreamsButton.doClick();
+            }
+        });
         loadLogsButton.addActionListener(e -> loadLogs());
         jsonLogStreamFilterComboBox.addActionListener(e -> applyJsonLogStreamFilter());
         applyClientSearchButton.addActionListener(e -> applyClientSideSearch());
@@ -329,7 +383,7 @@ public class LogsPanel extends JPanel {
         groupComboBox.addActionListener(e -> {
             Object selected = groupComboBox.getSelectedItem();
             if (selected != null && !CHOOSE_GROUP_OPTION.equals(selected)) {
-                refreshLogStreams();
+                refreshLogStreams(true);
             }
         });
     }
@@ -378,6 +432,10 @@ public class LogsPanel extends JPanel {
     }
 
     private void refreshLogStreams() {
+        refreshLogStreams(false);
+    }
+
+    private void refreshLogStreams(boolean loadLogsAfterRefresh) {
         if (currentProfile == null || currentProfile.isBlank()) {
             statusLabel.setText("No profile selected");
             return;
@@ -400,6 +458,7 @@ public class LogsPanel extends JPanel {
 
             @Override
             protected void done() {
+                boolean shouldAutoLoadLogs = false;
                 try {
                     List<CloudWatchLogsService.LogStreamOption> streams = get();
                     DefaultComboBoxModel<CloudWatchLogsService.LogStreamOption> model = new DefaultComboBoxModel<>();
@@ -409,6 +468,7 @@ public class LogsPanel extends JPanel {
                     }
                     streamComboBox.setModel(model);
                     statusLabel.setText("Streams: " + streams.size() + " (most recent first)");
+                    shouldAutoLoadLogs = true;
                 } catch (InterruptedException ex) {
                     Thread.currentThread().interrupt();
                     statusLabel.setText("Interrupted while loading streams");
@@ -417,6 +477,9 @@ public class LogsPanel extends JPanel {
                     showError(ex.getCause() == null ? ex.getMessage() : ex.getCause().getMessage());
                 } finally {
                     setBusyState(false, statusLabel.getText());
+                    if (loadLogsAfterRefresh && shouldAutoLoadLogs) {
+                        loadLogs();
+                    }
                 }
             }
         }.execute();

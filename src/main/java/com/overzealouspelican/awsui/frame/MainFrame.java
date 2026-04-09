@@ -1,16 +1,19 @@
 package com.overzealouspelican.awsui.frame;
 
 import com.overzealouspelican.awsui.panel.CodePipelinePanel;
+import com.overzealouspelican.awsui.panel.EcsPanel;
 import com.overzealouspelican.awsui.panel.LogsPanel;
 import com.overzealouspelican.awsui.panel.SettingsEditorPanel;
 import com.overzealouspelican.awsui.service.AwsProfileService;
 import com.overzealouspelican.awsui.service.CloudWatchLogsService;
 import com.overzealouspelican.awsui.service.CodePipelineService;
+import com.overzealouspelican.awsui.service.EcsService;
 import com.overzealouspelican.awsui.service.SettingsService;
 import com.overzealouspelican.awsui.util.UITheme;
 
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.List;
@@ -24,6 +27,7 @@ public class MainFrame extends JFrame {
     private static final String VIEW_SETTINGS = "settings";
     private static final String VIEW_PIPELINES = "pipelines";
     private static final String VIEW_LOGS = "logs";
+    private static final String VIEW_ECS = "ecs";
 
     private final SettingsService settingsService;
     private final AwsProfileService awsProfileService;
@@ -31,6 +35,7 @@ public class MainFrame extends JFrame {
     private final JPanel contentContainer;
     private CodePipelinePanel pipelinePanel;
     private LogsPanel logsPanel;
+    private EcsPanel ecsPanel;
 
     public MainFrame(SettingsService settingsService) {
         super("AWS UI");
@@ -45,16 +50,19 @@ public class MainFrame extends JFrame {
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setMinimumSize(new Dimension(900, 600));
         setLocationRelativeTo(null);
+        setExtendedState(JFrame.MAXIMIZED_BOTH);
         setLayout(new BorderLayout());
         setJMenuBar(createMenuBar());
 
         add(createToolbar(), BorderLayout.NORTH);
 
         pipelinePanel = new CodePipelinePanel(new CodePipelineService(), settingsService);
+        ecsPanel = new EcsPanel(new EcsService(), settingsService);
         logsPanel = new LogsPanel(new CloudWatchLogsService(), settingsService);
         contentContainer.add(createEmptyCanvas(), VIEW_HOME);
         contentContainer.add(new SettingsEditorPanel(settingsService), VIEW_SETTINGS);
         contentContainer.add(pipelinePanel, VIEW_PIPELINES);
+        contentContainer.add(ecsPanel, VIEW_ECS);
         contentContainer.add(logsPanel, VIEW_LOGS);
         add(contentContainer, BorderLayout.CENTER);
         showHomeView();
@@ -62,28 +70,42 @@ public class MainFrame extends JFrame {
 
     private JMenuBar createMenuBar() {
         JMenuBar menuBar = new JMenuBar();
+        int menuShortcutKeyMask = Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx();
 
         JMenu fileMenu = new JMenu("File");
+        JMenuItem settingsItem = new JMenuItem("Settings");
         JMenuItem closeItem = new JMenuItem("Close");
+
+        settingsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_COMMA, menuShortcutKeyMask));
+        settingsItem.addActionListener(e -> showSettingsView());
+
+        closeItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_W, menuShortcutKeyMask));
         closeItem.addActionListener(e -> dispose());
+
+        fileMenu.add(settingsItem);
+        fileMenu.addSeparator();
         fileMenu.add(closeItem);
 
         JMenu viewMenu = new JMenu("View");
         JMenuItem homeItem = new JMenuItem("Home");
         JMenuItem pipelinesItem = new JMenuItem("Pipelines");
+        JMenuItem ecsItem = new JMenuItem("ECS");
         JMenuItem logsItem = new JMenuItem("Logs");
-        JMenuItem settingsItem = new JMenuItem("Settings");
+
+        homeItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_1, menuShortcutKeyMask));
+        pipelinesItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_2, menuShortcutKeyMask));
+        ecsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_3, menuShortcutKeyMask));
+        logsItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_4, menuShortcutKeyMask));
 
         homeItem.addActionListener(e -> showHomeView());
         pipelinesItem.addActionListener(e -> showPipelinesView());
+        ecsItem.addActionListener(e -> showEcsView());
         logsItem.addActionListener(e -> showLogsView());
-        settingsItem.addActionListener(e -> showSettingsView());
 
         viewMenu.add(homeItem);
         viewMenu.add(pipelinesItem);
+        viewMenu.add(ecsItem);
         viewMenu.add(logsItem);
-        viewMenu.addSeparator();
-        viewMenu.add(settingsItem);
 
         menuBar.add(fileMenu);
         menuBar.add(viewMenu);
@@ -94,7 +116,7 @@ public class MainFrame extends JFrame {
     private JComponent createToolbar() {
         JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, UITheme.SPACING_SM, 6));
         toolbar.setBorder(BorderFactory.createEmptyBorder(4, UITheme.SPACING_SM, 4, UITheme.SPACING_SM));
-        toolbar.setBackground(UIManager.getColor("Panel.background"));
+        toolbar.setBackground(UITheme.surfaceBackground());
         toolbar.setPreferredSize(new Dimension(0, UITheme.TOOLBAR_HEIGHT));
 
         JLabel appLabel = new JLabel("AWS UI Shell");
@@ -125,14 +147,19 @@ public class MainFrame extends JFrame {
     private JComponent createEmptyCanvas() {
         JPanel contentPanel = new JPanel(new BorderLayout());
         contentPanel.setBorder(UITheme.contentPadding());
-        contentPanel.setBackground(UIManager.getColor("Panel.background"));
+        contentPanel.setBackground(UITheme.panelBackground());
 
-        JPanel cardsPanel = new JPanel(new GridLayout(1, 3, UITheme.SPACING_LG, UITheme.SPACING_LG));
+        JPanel cardsPanel = new JPanel(new GridLayout(2, 2, UITheme.SPACING_LG, UITheme.SPACING_LG));
         cardsPanel.setOpaque(false);
         cardsPanel.add(createNavigationCard(
             "Pipelines",
             "Monitor and manage AWS CodePipelines",
             this::showPipelinesView
+        ));
+        cardsPanel.add(createNavigationCard(
+            "ECS",
+            "View clusters, services, and force deployments",
+            this::showEcsView
         ));
         cardsPanel.add(createNavigationCard(
             "Logs",
@@ -162,7 +189,7 @@ public class MainFrame extends JFrame {
     private JComponent createNavigationCard(String title, String description, Runnable onClick) {
         JPanel card = new JPanel();
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
-        card.setBackground(UIManager.getColor("Panel.background"));
+        card.setBackground(UITheme.surfaceBackground());
         card.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
             BorderFactory.createEmptyBorder(UITheme.SPACING_LG, UITheme.SPACING_LG, UITheme.SPACING_LG, UITheme.SPACING_LG)
@@ -190,7 +217,7 @@ public class MainFrame extends JFrame {
         card.add(actionLabel);
 
         Color normalColor = card.getBackground();
-        Color hoverColor = UIManager.getColor("Panel.background").darker();
+        Color hoverColor = UITheme.hoverBackground(normalColor);
 
         card.addMouseListener(new MouseAdapter() {
             @Override
@@ -233,6 +260,7 @@ public class MainFrame extends JFrame {
             if (selected != null) {
                 settingsService.saveAwsProfile(selected);
                 pipelinePanel.setProfile(selected);
+                ecsPanel.setProfile(selected);
                 logsPanel.setProfile(selected);
             }
         });
@@ -247,6 +275,11 @@ public class MainFrame extends JFrame {
     private void showPipelinesView() {
         contentLayout.show(contentContainer, VIEW_PIPELINES);
         pipelinePanel.refresh();
+    }
+
+    private void showEcsView() {
+        contentLayout.show(contentContainer, VIEW_ECS);
+        ecsPanel.refresh();
     }
 
     private void showLogsView() {

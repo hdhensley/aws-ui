@@ -35,7 +35,7 @@ public class SettingsEditorPanel extends JPanel {
 
     private void initializePanel() {
         setLayout(new BorderLayout());
-        setBackground(UIManager.getColor("Panel.background"));
+        setBackground(UITheme.panelBackground());
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         splitPane.setBorder(null);
@@ -77,7 +77,7 @@ public class SettingsEditorPanel extends JPanel {
 
     private JComponent createDetailsContainer() {
         detailsPanel.setBorder(UITheme.contentPadding());
-        detailsPanel.setBackground(UIManager.getColor("Panel.background"));
+        detailsPanel.setBackground(UITheme.panelBackground());
         detailsPanel.add(createAppearancePanel(), CATEGORY_APPEARANCE);
         detailsPanel.add(createPlaceholderPanel(CATEGORY_GENERAL), CATEGORY_GENERAL);
         detailsPanel.add(createPlaceholderPanel(CATEGORY_ADVANCED), CATEGORY_ADVANCED);
@@ -91,7 +91,7 @@ public class SettingsEditorPanel extends JPanel {
     private JPanel createAppearancePanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
 
         panel.add(createSectionLabel(CATEGORY_APPEARANCE));
         panel.add(Box.createVerticalStrut(UITheme.SPACING_SM));
@@ -106,7 +106,7 @@ public class SettingsEditorPanel extends JPanel {
     private JPanel createPlaceholderPanel(String categoryName) {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
 
         JLabel heading = createSectionLabel(categoryName);
         JLabel description = new JLabel("No settings are available here yet.");
@@ -131,7 +131,7 @@ public class SettingsEditorPanel extends JPanel {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
         panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60));
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
         panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         JLabel label = new JLabel("Theme:");
@@ -152,7 +152,7 @@ public class SettingsEditorPanel extends JPanel {
     private JPanel createButtonPanel() {
         JPanel panel = new JPanel(new FlowLayout(FlowLayout.LEFT, UITheme.SPACING_SM, 0));
         panel.setMaximumSize(new Dimension(Integer.MAX_VALUE, UITheme.BUTTON_HEIGHT + 4));
-        panel.setBackground(UIManager.getColor("Panel.background"));
+        panel.setBackground(UITheme.panelBackground());
         panel.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         resetButton = new JButton("Reset");

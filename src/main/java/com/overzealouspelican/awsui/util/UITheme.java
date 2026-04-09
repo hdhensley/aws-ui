@@ -30,10 +30,24 @@ public final class UITheme {
     public static final Color ACCENT = new Color(47, 128, 237);
     public static final Color ACCENT_FOREGROUND = Color.WHITE;
 
+    private static final Color FALLBACK_DARK_PANEL = new Color(43, 46, 52);
+
     /**
      * Apply FlatLaf defaults for rounded corners and a modern baseline style.
      */
     public static void applyGlobalDefaults() {
+        Color basePanel = panelBackground();
+        Color surface = surfaceBackground();
+
+        if (isDarkTheme()) {
+            // Deepen baseline surfaces so dark themes are visually darker than neutral gray.
+            UIManager.put("Panel.background", darken(basePanel, 0.15f));
+            UIManager.put("Viewport.background", darken(basePanel, 0.12f));
+            UIManager.put("Table.background", darken(basePanel, 0.1f));
+            UIManager.put("TextArea.background", darken(basePanel, 0.1f));
+            UIManager.put("TabbedPane.background", darken(basePanel, 0.12f));
+        }
+
         UIManager.put("Button.arc", ARC);
         UIManager.put("Component.arc", ARC);
         UIManager.put("TextComponent.arc", ARC);
@@ -55,7 +69,7 @@ public final class UITheme {
         UIManager.put("SplitPane.dividerSize", 4);
         UIManager.put("SplitPaneDivider.gripDotCount", 0);
 
-        UIManager.put("TabbedPane.selectedBackground", UIManager.getColor("Panel.background"));
+        UIManager.put("TabbedPane.selectedBackground", surface);
         UIManager.put("TabbedPane.tabHeight", 36);
         UIManager.put("TabbedPane.tabSelectionArc", ARC);
         UIManager.put("TabbedPane.cardTabSelectionHeight", 3);
@@ -65,9 +79,42 @@ public final class UITheme {
         UIManager.put("PopupMenu.arc", ARC);
         UIManager.put("List.selectionArc", ARC);
         UIManager.put("Table.selectionArc", ARC);
-        UIManager.put("ToolTip.background", UIManager.getColor("Panel.background"));
+        UIManager.put("ToolTip.background", surface);
         UIManager.put("ToolTip.arc", ARC);
         UIManager.put("ComboBox.padding", new Insets(4, 8, 4, 8));
+    }
+
+    public static Color panelBackground() {
+        Color panel = UIManager.getColor("Panel.background");
+        if (panel != null) {
+            return panel;
+        }
+        return isDarkTheme() ? FALLBACK_DARK_PANEL : UIManager.getColor("control");
+    }
+
+    public static Color surfaceBackground() {
+        Color panel = panelBackground();
+        return isDarkTheme() ? darken(panel, 0.1f) : panel;
+    }
+
+    public static Color hoverBackground(Color base) {
+        if (base == null) {
+            base = panelBackground();
+        }
+        return isDarkTheme() ? base.brighter() : base.darker();
+    }
+
+    private static boolean isDarkTheme() {
+        Object dark = UIManager.get("laf.dark");
+        return dark instanceof Boolean && (Boolean) dark;
+    }
+
+    private static Color darken(Color color, float factor) {
+        factor = Math.max(0f, Math.min(1f, factor));
+        int r = Math.max(0, Math.round(color.getRed() * (1f - factor)));
+        int g = Math.max(0, Math.round(color.getGreen() * (1f - factor)));
+        int b = Math.max(0, Math.round(color.getBlue() * (1f - factor)));
+        return new Color(r, g, b, color.getAlpha());
     }
 
     public static Border contentPadding() {
