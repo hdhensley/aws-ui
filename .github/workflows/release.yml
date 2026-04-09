@@ -1,0 +1,299 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Resolve jar name
+        id: jar
+        shell: bash
+        run: echo "FILE=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.build.finalName).jar" >> "$GITHUB_OUTPUT"
+
+      - name: Create Windows Installer
+        shell: pwsh
+        run: |
+          jpackage `
+            --input target `
+            --main-jar ${{ steps.jar.outputs.FILE }} `
+            --name "AWS UI" `
+            --type exe `
+            --app-version ${{ steps.version.outputs.VERSION }} `
+            --vendor "OverzealousPelican Development" `
+            --description "Desktop UI for AWS operations" `
+            --java-options '-Xmx512m' `
+            --win-dir-chooser `
+            --win-menu `
+            --win-shortcut
+
+      - name: Upload Windows Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: "*.exe"
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Resolve jar name
+        id: jar
+        run: echo "FILE=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.build.finalName).jar" >> "$GITHUB_OUTPUT"
+
+      - name: Import signing certificate
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain-db
+          security set-keychain-settings -lut 21600 build.keychain-db
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain-db
+
+          security import certificate.p12 -k build.keychain-db -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain-db
+          security list-keychains -d user -s build.keychain-db $(security list-keychains -d user | tr -d '"')
+
+          security find-identity -v -p codesigning
+          rm certificate.p12
+
+      - name: Create entitlements file
+        run: |
+          cat > entitlements.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Create macOS app bundle
+        run: |
+          jpackage \
+            --input target \
+            --main-jar "${{ steps.jar.outputs.FILE }}" \
+            --name "AWS UI" \
+            --type app-image \
+            --app-version "${{ steps.version.outputs.VERSION }}" \
+            --vendor "OverzealousPelican Development" \
+            --description "Desktop UI for AWS operations" \
+            --java-options '-Xmx512m' \
+            --mac-package-name "AWS UI"
+
+      - name: Sign the app bundle
+        env:
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: |
+          set -euo pipefail
+          APP="AWS UI.app"
+          WORK_DIR="$(pwd)"
+
+          echo "test" > /tmp/codesign_test
+          codesign --force --sign "$DEVELOPER_ID" --timestamp /tmp/codesign_test
+          rm /tmp/codesign_test
+
+          for jar in $(find "$APP" -name "*.jar"); do
+            JAR_ABS="$(cd "$(dirname "$jar")" && pwd)/$(basename "$jar")"
+            if jar tf "$JAR_ABS" | grep -q "\.dylib$"; then
+              EXTRACT_DIR=$(mktemp -d)
+              pushd "$EXTRACT_DIR" > /dev/null
+              jar xf "$JAR_ABS"
+
+              for dylib in $(find . -name "*.dylib"); do
+                codesign --force --sign "$DEVELOPER_ID" --options runtime \
+                  --entitlements "$WORK_DIR/entitlements.plist" --timestamp "$dylib"
+              done
+
+              jar cf "$JAR_ABS" .
+              popd > /dev/null
+              rm -rf "$EXTRACT_DIR"
+            fi
+          done
+
+          MACHO_FILES=$(find "$APP" -type f -exec sh -c 'file "$1" | grep -q "Mach-O"' _ {} \; -print)
+          for file in $MACHO_FILES; do
+            codesign --force --sign "$DEVELOPER_ID" --options runtime \
+              --entitlements entitlements.plist --timestamp "$file"
+            codesign --verify --verbose=0 "$file"
+          done
+
+          find "$APP" -name "*.jar" -exec codesign --force --sign "$DEVELOPER_ID" --timestamp {} \;
+
+          codesign --force --sign "$DEVELOPER_ID" --options runtime \
+            --entitlements entitlements.plist --timestamp "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+      - name: Create DMG
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+        run: |
+          DMG_FILE="AWS-UI-${VERSION}.dmg"
+
+          mkdir -p dmg-staging
+          cp -R "AWS UI.app" dmg-staging/
+          ln -s /Applications dmg-staging/Applications
+
+          hdiutil create -volname "AWS UI" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "$DMG_FILE"
+
+          codesign --force --sign "$DEVELOPER_ID" --timestamp "$DMG_FILE"
+          codesign --verify --verbose=2 "$DMG_FILE"
+
+          rm -rf dmg-staging
+
+      - name: Notarize the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          DMG_FILE="AWS-UI-${VERSION}.dmg"
+
+          SUBMIT_OUTPUT=$(xcrun notarytool submit "$DMG_FILE" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait 2>&1) || true
+
+          echo "$SUBMIT_OUTPUT"
+
+          SUBMISSION_ID=$(echo "$SUBMIT_OUTPUT" | grep -m1 "id:" | awk '{print $2}')
+
+          if echo "$SUBMIT_OUTPUT" | grep -q "status: Accepted"; then
+            echo "Notarization succeeded"
+          else
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --team-id "$APPLE_TEAM_ID" \
+                --password "$APPLE_APP_PASSWORD" \
+                notarization-log.json
+              cat notarization-log.json
+            fi
+            exit 1
+          fi
+
+          xcrun stapler staple "$DMG_FILE"
+
+      - name: Upload macOS Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: "AWS-UI-*.dmg"
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build with Maven
+        run: mvn -B clean package
+
+      - name: Resolve jar name
+        id: jar
+        run: echo "FILE=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.build.finalName).jar" >> "$GITHUB_OUTPUT"
+
+      - name: Create Linux DEB Installer
+        run: |
+          cp -r "$JAVA_HOME" custom-runtime
+
+          jpackage \
+            --input target \
+            --main-jar "${{ steps.jar.outputs.FILE }}" \
+            --name "aws-ui" \
+            --type deb \
+            --app-version "${{ steps.version.outputs.VERSION }}" \
+            --vendor "OverzealousPelican Development" \
+            --description "Desktop UI for AWS operations" \
+            --java-options '-Xmx512m' \
+            --runtime-image custom-runtime \
+            --linux-package-name aws-ui \
+            --linux-app-category utility \
+            --linux-shortcut
+
+      - name: Upload Linux Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-installer
+          path: "*.deb"
+          if-no-files-found: error
+
+  create-release:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            windows-installer/*.exe
+            macos-installer/*.dmg
+            linux-installer/*.deb
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
