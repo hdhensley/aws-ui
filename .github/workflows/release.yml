@@ -132,36 +132,44 @@ jobs:
           APP="AWS UI.app"
           WORK_DIR="$(pwd)"
 
+          if [ ! -d "$APP" ]; then
+            echo "ERROR: App bundle not found: $APP"
+            ls -la
+            exit 1
+          fi
+
+          echo "=== App bundle snapshot before signing ==="
+          find "$APP" -maxdepth 3 -print
+
           echo "test" > /tmp/codesign_test
           codesign --force --sign "$DEVELOPER_ID" --timestamp /tmp/codesign_test
           rm /tmp/codesign_test
 
-          for jar in $(find "$APP" -name "*.jar"); do
+          while IFS= read -r -d '' jar; do
             JAR_ABS="$(cd "$(dirname "$jar")" && pwd)/$(basename "$jar")"
             if jar tf "$JAR_ABS" | grep -q "\.dylib$"; then
               EXTRACT_DIR=$(mktemp -d)
               pushd "$EXTRACT_DIR" > /dev/null
               jar xf "$JAR_ABS"
 
-              for dylib in $(find . -name "*.dylib"); do
+              while IFS= read -r -d '' dylib; do
                 codesign --force --sign "$DEVELOPER_ID" --options runtime \
                   --entitlements "$WORK_DIR/entitlements.plist" --timestamp "$dylib"
-              done
+              done < <(find . -name "*.dylib" -print0)
 
               jar cf "$JAR_ABS" .
               popd > /dev/null
               rm -rf "$EXTRACT_DIR"
             fi
-          done
+          done < <(find "$APP" -name "*.jar" -print0)
 
-          MACHO_FILES=$(find "$APP" -type f -exec sh -c 'file "$1" | grep -q "Mach-O"' _ {} \; -print)
-          for file in $MACHO_FILES; do
+          while IFS= read -r -d '' file; do
             codesign --force --sign "$DEVELOPER_ID" --options runtime \
               --entitlements entitlements.plist --timestamp "$file"
             codesign --verify --verbose=0 "$file"
-          done
+          done < <(find "$APP" -type f -exec sh -c 'file "$1" | grep -q "Mach-O"' _ {} \; -print0)
 
-          find "$APP" -name "*.jar" -exec codesign --force --sign "$DEVELOPER_ID" --timestamp {} \;
+          find "$APP" -name "*.jar" -exec codesign --force --sign "$DEVELOPER_ID" --timestamp {} +
 
           codesign --force --sign "$DEVELOPER_ID" --options runtime \
             --entitlements entitlements.plist --timestamp "$APP"
