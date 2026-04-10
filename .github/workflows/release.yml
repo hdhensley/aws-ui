@@ -122,7 +122,8 @@ jobs:
             --vendor "OverzealousPelican Development" \
             --description "Desktop UI for AWS operations" \
             --java-options '-Xmx512m' \
-            --mac-package-name "AWS UI"
+            --mac-package-name "AWS UI" \
+            --icon src/main/resources/icons/app-icon.icns
 
       - name: Sign the app bundle
         env:
