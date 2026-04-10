@@ -12,6 +12,9 @@ import javax.swing.table.TableCellEditor;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -212,8 +215,8 @@ public class CodePipelinePanel extends JPanel {
         pipelineTable.getColumnModel().getColumn(COL_CONTEXT).setPreferredWidth(200);
         pipelineTable.getColumnModel().getColumn(COL_LAST_DEPLOYED).setPreferredWidth(190);
         pipelineTable.getColumnModel().getColumn(COL_LAST_DEPLOYED).setMaxWidth(220);
-        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setPreferredWidth(170);
-        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setMaxWidth(190);
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setPreferredWidth(250);
+        pipelineTable.getColumnModel().getColumn(COL_ACTIONS).setMaxWidth(280);
 
         pipelineTable.getColumnModel().getColumn(COL_HISTORY).setCellRenderer(new HistoryCellRenderer());
         pipelineTable.getColumnModel().getColumn(COL_CONTEXT).setCellRenderer(new ContextCellRenderer());
@@ -455,6 +458,33 @@ public class CodePipelinePanel extends JPanel {
         }.execute();
     }
 
+    private void handleView(CodePipelineService.PipelineRow row) {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+            JOptionPane.showMessageDialog(this,
+                "Opening the AWS Console is not supported on this system.",
+                "Unsupported Action", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try {
+            Desktop.getDesktop().browse(buildPipelineConsoleUri(row));
+        } catch (Exception e) {
+            JOptionPane.showMessageDialog(this,
+                "Failed to open pipeline in AWS Console: " + e.getMessage(),
+                "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private URI buildPipelineConsoleUri(CodePipelineService.PipelineRow row) {
+        String encodedPipelineName = URLEncoder.encode(row.name(), StandardCharsets.UTF_8)
+            .replace("+", "%20");
+        String url = "https://" + row.region()
+            + ".console.aws.amazon.com/codesuite/codepipeline/pipelines/"
+            + encodedPipelineName
+            + "/view?region=" + row.region();
+        return URI.create(url);
+    }
+
     // -------------------------------------------------------------------------
     // Table model
     // -------------------------------------------------------------------------
@@ -587,14 +617,17 @@ public class CodePipelinePanel extends JPanel {
     }
 
     private class ActionsRenderer extends JPanel implements TableCellRenderer {
+        private final JButton viewBtn  = new JButton("View");
         private final JButton startBtn = new JButton("▶  Start");
         private final JButton stopBtn  = new JButton("⏹  Stop");
 
         ActionsRenderer() {
             setLayout(new FlowLayout(FlowLayout.CENTER, UITheme.SPACING_SM, 4));
             setOpaque(true);
+            viewBtn.setFont(viewBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
             startBtn.setFont(startBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
             stopBtn.setFont(stopBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
+            add(viewBtn);
             add(startBtn);
             add(stopBtn);
         }
@@ -613,14 +646,20 @@ public class CodePipelinePanel extends JPanel {
 
     private class ActionsEditor extends AbstractCellEditor implements TableCellEditor {
         private final JPanel panel = new JPanel(new FlowLayout(FlowLayout.CENTER, UITheme.SPACING_SM, 4));
+        private final JButton viewBtn  = new JButton("View");
         private final JButton startBtn = new JButton("▶  Start");
         private final JButton stopBtn  = new JButton("⏹  Stop");
         private CodePipelineService.PipelineRow currentRow;
 
         ActionsEditor() {
+            viewBtn.setFont(viewBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
             startBtn.setFont(startBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
             stopBtn.setFont(stopBtn.getFont().deriveFont(UITheme.FONT_SIZE_SM));
 
+            viewBtn.addActionListener(e -> {
+                fireEditingStopped();
+                handleView(currentRow);
+            });
             startBtn.addActionListener(e -> {
                 fireEditingStopped();
                 handleStart(currentRow);
@@ -630,6 +669,7 @@ public class CodePipelinePanel extends JPanel {
                 handleStop(currentRow);
             });
 
+            panel.add(viewBtn);
             panel.add(startBtn);
             panel.add(stopBtn);
         }
