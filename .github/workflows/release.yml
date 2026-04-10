@@ -262,8 +262,6 @@ jobs:
 
       - name: Create Linux DEB Installer
         run: |
-          cp -r "$JAVA_HOME" custom-runtime
-
           jpackage \
             --input target \
             --main-jar "${{ steps.jar.outputs.FILE }}" \
@@ -273,7 +271,6 @@ jobs:
             --vendor "OverzealousPelican Development" \
             --description "Desktop UI for AWS operations" \
             --java-options '-Xmx512m' \
-            --runtime-image custom-runtime \
             --linux-package-name aws-ui \
             --linux-app-category utility \
             --linux-shortcut
