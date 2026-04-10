@@ -8,6 +8,7 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.codepipeline.CodePipelineClient;
 import software.amazon.awssdk.services.codepipeline.model.PipelineExecutionStatus;
 import software.amazon.awssdk.services.codepipeline.model.PipelineExecutionSummary;
+import software.amazon.awssdk.services.codepipeline.model.ActionState;
 import software.amazon.awssdk.services.codepipeline.model.StageState;
 
 import java.time.Instant;
@@ -33,6 +34,17 @@ public class CodePipelineService {
         String lastDeployedAt,
         String inProgressExecutionId,        // null when pipeline is not running
         List<String> recentStatuses          // newest first, up to 5
+    ) {}
+
+    public record PhaseState(
+        String name,
+        String status,
+        List<PhaseActionState> actions
+    ) {}
+
+    public record PhaseActionState(
+        String name,
+        String status
     ) {}
 
     /**
@@ -95,16 +107,25 @@ public class CodePipelineService {
         }
     }
 
-    public List<String> getPipelinePhases(String profileName, String pipelineName) {
+    public List<PhaseState> getPipelinePhases(String profileName, String pipelineName) {
         String region = resolveRegion(profileName);
         try (CodePipelineClient client = buildClient(profileName, region)) {
             var state = client.getPipelineState(r -> r.name(pipelineName));
-            List<String> phases = new ArrayList<>();
+            List<PhaseState> phases = new ArrayList<>();
             for (StageState stage : state.stageStates()) {
-                String status = stage.latestExecution() == null
+                String phaseStatus = stage.latestExecution() == null
                     ? "-"
                     : stage.latestExecution().statusAsString();
-                phases.add(stage.stageName() + ": " + status);
+
+                List<PhaseActionState> actions = new ArrayList<>();
+                for (ActionState action : stage.actionStates()) {
+                    String actionStatus = action.latestExecution() == null
+                        ? "-"
+                        : action.latestExecution().statusAsString();
+                    actions.add(new PhaseActionState(action.actionName(), actionStatus));
+                }
+
+                phases.add(new PhaseState(stage.stageName(), phaseStatus, actions));
             }
             return phases;
         }
