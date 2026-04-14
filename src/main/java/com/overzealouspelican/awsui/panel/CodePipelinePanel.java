@@ -54,9 +54,10 @@ public class CodePipelinePanel extends JPanel {
     private JTextField pipelineSearchField;
     private JLabel errorLabel;
     private JLabel statusLabel;
-    private JLabel visualRefreshStatusLabel;
     private JProgressBar visualRefreshProgressBar;
     private JButton refreshVisualButton;
+    private JSplitPane pipelineSplitPane;
+    private JPanel pipelineDetailsPanel;
     private CardLayout stateLayout;
     private JPanel stateContainer;
     private Timer visualRefreshTimer;
@@ -262,10 +263,6 @@ public class CodePipelinePanel extends JPanel {
         JLabel detailsTitleLabel = new JLabel("Pipeline Details");
         detailsTitleLabel.setFont(detailsTitleLabel.getFont().deriveFont(Font.BOLD, UITheme.FONT_SIZE_MD));
 
-        visualRefreshStatusLabel = new JLabel("Select a pipeline to enable visual refresh.");
-        visualRefreshStatusLabel.setFont(visualRefreshStatusLabel.getFont().deriveFont(Font.PLAIN, UITheme.FONT_SIZE_SM));
-        visualRefreshStatusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
-
         visualRefreshProgressBar = new JProgressBar(0, VISUAL_REFRESH_INTERVAL_MS);
         visualRefreshProgressBar.setStringPainted(true);
         visualRefreshProgressBar.setPreferredSize(new Dimension(180, UITheme.BUTTON_HEIGHT - 4));
@@ -288,7 +285,6 @@ public class CodePipelinePanel extends JPanel {
 
         JPanel detailsActionsPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, UITheme.SPACING_SM, 0));
         detailsActionsPanel.setOpaque(false);
-        detailsActionsPanel.add(visualRefreshStatusLabel);
         detailsActionsPanel.add(visualRefreshProgressBar);
         detailsActionsPanel.add(refreshVisualButton);
 
@@ -308,19 +304,21 @@ public class CodePipelinePanel extends JPanel {
 
         stackedDetailsContent.add(summaryAndGraphPanel, BorderLayout.CENTER);
 
-        JPanel detailsPanel = new JPanel(new BorderLayout());
-        detailsPanel.setBackground(UITheme.surfaceBackground());
-        detailsPanel.setBorder(BorderFactory.createCompoundBorder(
+        pipelineDetailsPanel = new JPanel(new BorderLayout());
+        pipelineDetailsPanel.setBackground(UITheme.surfaceBackground());
+        pipelineDetailsPanel.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")),
             BorderFactory.createEmptyBorder(UITheme.SPACING_SM, UITheme.SPACING_SM, UITheme.SPACING_SM, UITheme.SPACING_SM)
         ));
-        detailsPanel.add(stackedDetailsContent, BorderLayout.CENTER);
+        pipelineDetailsPanel.add(stackedDetailsContent, BorderLayout.CENTER);
 
-        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScrollPane, detailsPanel);
-        splitPane.setResizeWeight(0.72);
-        splitPane.setDividerSize(8);
+        pipelineSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, tableScrollPane, pipelineDetailsPanel);
+        pipelineSplitPane.setResizeWeight(0.72);
+        pipelineSplitPane.setDividerSize(8);
 
-        return splitPane;
+        setPipelineDetailsVisible(false);
+
+        return pipelineSplitPane;
     }
 
     private void applyPipelineNameFilter() {
@@ -357,10 +355,10 @@ public class CodePipelinePanel extends JPanel {
             errorLabel.setText("No AWS profile selected. Choose one on the Home page.");
             stateLayout.show(stateContainer, STATE_ERROR);
             statusLabel.setText("");
-            setVisualRefreshStatus("Select a pipeline to enable visual refresh.");
             if (refreshVisualButton != null) {
                 refreshVisualButton.setEnabled(false);
             }
+            setPipelineDetailsVisible(false);
             return;
         }
 
@@ -389,7 +387,7 @@ public class CodePipelinePanel extends JPanel {
                     if (refreshVisualButton != null) {
                         refreshVisualButton.setEnabled(false);
                     }
-                    setVisualRefreshStatus("Select a pipeline to enable visual refresh.");
+                    setPipelineDetailsVisible(false);
                     detailsRequestVersion++;
                     stateLayout.show(stateContainer, STATE_TABLE);
                     String count = rows.size() + " pipeline" + (rows.size() == 1 ? "" : "s");
@@ -425,10 +423,11 @@ public class CodePipelinePanel extends JPanel {
             if (refreshVisualButton != null) {
                 refreshVisualButton.setEnabled(false);
             }
-            setVisualRefreshStatus("Select a pipeline to enable visual refresh.");
+            setPipelineDetailsVisible(false);
             return;
         }
 
+        setPipelineDetailsVisible(true);
         if (refreshVisualButton != null) {
             refreshVisualButton.setEnabled(true);
         }
@@ -443,7 +442,7 @@ public class CodePipelinePanel extends JPanel {
             if (refreshVisualButton != null) {
                 refreshVisualButton.setEnabled(false);
             }
-            setVisualRefreshStatus("Select a pipeline to enable visual refresh.");
+            setPipelineDetailsVisible(false);
             return;
         }
 
@@ -453,7 +452,6 @@ public class CodePipelinePanel extends JPanel {
         if (showLoadingState) {
             pipelinePhaseGraphPanel.showLoading();
         }
-        setVisualRefreshStatus("Refreshing selected pipeline...");
         setVisualRefreshProgressState(false, 0, "Refreshing...");
         loadPipelineSnapshot(row.name(), requestVersion);
     }
@@ -494,20 +492,40 @@ public class CodePipelinePanel extends JPanel {
                     pipelineSummaryArea.setText(buildPipelineSummaryText(snapshot.row()));
                     pipelineSummaryArea.setCaretPosition(0);
                     pipelinePhaseGraphPanel.setPhases(snapshot.phases());
-                    setVisualRefreshStatus("Last refreshed just now.");
-                    restartVisualRefreshTimers();
+                    if (shouldAutoRefresh(snapshot.phases())) {
+                        restartVisualRefreshTimers();
+                    } else {
+                        stopVisualRefreshTimers();
+                        setVisualRefreshProgressState(false, 0, "Auto-refresh idle (all phases OK)");
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     pipelinePhaseGraphPanel.showMessage("Load interrupted");
-                    setVisualRefreshStatus("Visual refresh interrupted.");
                     setVisualRefreshProgressState(false, 0, "Refresh interrupted");
                 } catch (ExecutionException e) {
                     pipelinePhaseGraphPanel.showMessage("Failed to load phases");
-                    setVisualRefreshStatus("Failed to refresh selected pipeline.");
                     setVisualRefreshProgressState(false, 0, "Refresh failed");
                 }
             }
         }.execute();
+    }
+
+    private boolean shouldAutoRefresh(List<CodePipelineService.PhaseState> phases) {
+        if (phases == null || phases.isEmpty()) {
+            return false;
+        }
+
+        for (CodePipelineService.PhaseState phase : phases) {
+            if (phase == null) {
+                return true;
+            }
+
+            String status = phase.status();
+            if (status == null || status.isBlank() || !status.contains("Succeeded")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void restartVisualRefreshTimers() {
@@ -537,9 +555,17 @@ public class CodePipelinePanel extends JPanel {
         }
     }
 
-    private void setVisualRefreshStatus(String message) {
-        if (visualRefreshStatusLabel != null) {
-            visualRefreshStatusLabel.setText(message);
+    private void setPipelineDetailsVisible(boolean visible) {
+        if (pipelineSplitPane == null || pipelineDetailsPanel == null) {
+            return;
+        }
+
+        pipelineDetailsPanel.setVisible(visible);
+        pipelineSplitPane.setDividerSize(visible ? 8 : 0);
+        if (visible) {
+            SwingUtilities.invokeLater(() -> pipelineSplitPane.setDividerLocation(0.72));
+        } else {
+            pipelineSplitPane.setDividerLocation(1.0d);
         }
     }
 
