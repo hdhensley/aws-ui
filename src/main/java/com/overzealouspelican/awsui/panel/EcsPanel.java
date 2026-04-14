@@ -97,23 +97,13 @@ public class EcsPanel extends JPanel {
     }
 
     private JComponent createHeader() {
-        JPanel header = new JPanel(new BorderLayout());
-        header.setBackground(UITheme.surfaceBackground());
-        header.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Component.borderColor")),
-            BorderFactory.createEmptyBorder(UITheme.SPACING_SM, UITheme.SPACING_LG, UITheme.SPACING_SM, UITheme.SPACING_LG)
-        ));
-
-        JLabel title = new JLabel("ECS");
-        title.setFont(title.getFont().deriveFont(Font.BOLD, UITheme.FONT_SIZE_TITLE));
-
         statusLabel = new JLabel();
         statusLabel.setFont(statusLabel.getFont().deriveFont(Font.PLAIN, UITheme.FONT_SIZE_SM));
         statusLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
 
-        header.add(title, BorderLayout.WEST);
-        header.add(statusLabel, BorderLayout.EAST);
-        return header;
+        JPanel trailingPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, UITheme.SPACING_SM, 0));
+        trailingPanel.add(statusLabel);
+        return UITheme.createPageHeader("ECS", trailingPanel);
     }
 
     private JComponent createClustersView() {

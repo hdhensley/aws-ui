@@ -47,6 +47,11 @@ public class CodePipelineService {
         String status
     ) {}
 
+    public record PipelineSnapshot(
+        PipelineRow row,
+        List<PhaseState> phases
+    ) {}
+
     /**
      * Lists all pipelines in the account/region for the given profile, including their latest
      * execution status. One extra API call is made per pipeline (listPipelineExecutions).
@@ -56,37 +61,18 @@ public class CodePipelineService {
         try (CodePipelineClient client = buildClient(profileName, region)) {
             List<PipelineRow> rows = new ArrayList<>();
             for (var summary : client.listPipelines().pipelines()) {
-                String status = "No executions";
-                String lastDeployedAt = "-";
-                String executionId = null;
-                List<String> recentStatuses = List.of();
-                try {
-                    List<PipelineExecutionSummary> executions = client
-                        .listPipelineExecutions(r -> r.pipelineName(summary.name()).maxResults(5))
-                        .pipelineExecutionSummaries();
-                    if (!executions.isEmpty()) {
-                        PipelineExecutionSummary latest = executions.get(0);
-                        status = latest.statusAsString();
-                        Instant latestTime = latest.lastUpdateTime() != null
-                            ? latest.lastUpdateTime()
-                            : latest.startTime();
-                        if (latestTime != null) {
-                            lastDeployedAt = DEPLOYED_TIME_FORMATTER.format(latestTime);
-                        }
-                        if (latest.status() == PipelineExecutionStatus.IN_PROGRESS
-                                || latest.status() == PipelineExecutionStatus.STOPPING) {
-                            executionId = latest.pipelineExecutionId();
-                        }
-                        recentStatuses = executions.stream()
-                            .map(PipelineExecutionSummary::statusAsString)
-                            .collect(Collectors.toList());
-                    }
-                } catch (Exception ignored) {
-                    status = "Unknown";
-                }
-                rows.add(new PipelineRow(summary.name(), status, region, lastDeployedAt, executionId, recentStatuses));
+                rows.add(buildPipelineRow(client, summary.name(), region));
             }
             return rows;
+        }
+    }
+
+    public PipelineSnapshot getPipelineSnapshot(String profileName, String pipelineName) {
+        String region = resolveRegion(profileName);
+        try (CodePipelineClient client = buildClient(profileName, region)) {
+            PipelineRow row = buildPipelineRow(client, pipelineName, region);
+            List<PhaseState> phases = loadPipelinePhases(client, pipelineName);
+            return new PipelineSnapshot(row, phases);
         }
     }
 
@@ -110,25 +96,61 @@ public class CodePipelineService {
     public List<PhaseState> getPipelinePhases(String profileName, String pipelineName) {
         String region = resolveRegion(profileName);
         try (CodePipelineClient client = buildClient(profileName, region)) {
-            var state = client.getPipelineState(r -> r.name(pipelineName));
-            List<PhaseState> phases = new ArrayList<>();
-            for (StageState stage : state.stageStates()) {
-                String phaseStatus = stage.latestExecution() == null
-                    ? "-"
-                    : stage.latestExecution().statusAsString();
-
-                List<PhaseActionState> actions = new ArrayList<>();
-                for (ActionState action : stage.actionStates()) {
-                    String actionStatus = action.latestExecution() == null
-                        ? "-"
-                        : action.latestExecution().statusAsString();
-                    actions.add(new PhaseActionState(action.actionName(), actionStatus));
-                }
-
-                phases.add(new PhaseState(stage.stageName(), phaseStatus, actions));
-            }
-            return phases;
+            return loadPipelinePhases(client, pipelineName);
         }
+    }
+
+    private PipelineRow buildPipelineRow(CodePipelineClient client, String pipelineName, String region) {
+        String status = "No executions";
+        String lastDeployedAt = "-";
+        String executionId = null;
+        List<String> recentStatuses = List.of();
+        try {
+            List<PipelineExecutionSummary> executions = client
+                .listPipelineExecutions(r -> r.pipelineName(pipelineName).maxResults(5))
+                .pipelineExecutionSummaries();
+            if (!executions.isEmpty()) {
+                PipelineExecutionSummary latest = executions.get(0);
+                status = latest.statusAsString();
+                Instant latestTime = latest.lastUpdateTime() != null
+                    ? latest.lastUpdateTime()
+                    : latest.startTime();
+                if (latestTime != null) {
+                    lastDeployedAt = DEPLOYED_TIME_FORMATTER.format(latestTime);
+                }
+                if (latest.status() == PipelineExecutionStatus.IN_PROGRESS
+                        || latest.status() == PipelineExecutionStatus.STOPPING) {
+                    executionId = latest.pipelineExecutionId();
+                }
+                recentStatuses = executions.stream()
+                    .map(PipelineExecutionSummary::statusAsString)
+                    .collect(Collectors.toList());
+            }
+        } catch (Exception ignored) {
+            status = "Unknown";
+        }
+        return new PipelineRow(pipelineName, status, region, lastDeployedAt, executionId, recentStatuses);
+    }
+
+    private List<PhaseState> loadPipelinePhases(CodePipelineClient client, String pipelineName) {
+        var state = client.getPipelineState(r -> r.name(pipelineName));
+        List<PhaseState> phases = new ArrayList<>();
+        for (StageState stage : state.stageStates()) {
+            String phaseStatus = stage.latestExecution() == null
+                ? "-"
+                : stage.latestExecution().statusAsString();
+
+            List<PhaseActionState> actions = new ArrayList<>();
+            for (ActionState action : stage.actionStates()) {
+                String actionStatus = action.latestExecution() == null
+                    ? "-"
+                    : action.latestExecution().statusAsString();
+                actions.add(new PhaseActionState(action.actionName(), actionStatus));
+            }
+
+            phases.add(new PhaseState(stage.stageName(), phaseStatus, actions));
+        }
+        return phases;
     }
 
     private CodePipelineClient buildClient(String profileName, String region) {

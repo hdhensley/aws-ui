@@ -121,6 +121,26 @@ public final class UITheme {
         return BorderFactory.createEmptyBorder(SPACING_LG, SPACING_LG, SPACING_LG, SPACING_LG);
     }
 
+    public static JComponent createPageHeader(String title, JComponent trailingContent) {
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(surfaceBackground());
+        header.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 0, 1, 0, UIManager.getColor("Component.borderColor")),
+            BorderFactory.createEmptyBorder(SPACING_SM, SPACING_LG, SPACING_SM, SPACING_LG)
+        ));
+
+        JLabel titleLabel = new JLabel(title);
+        titleLabel.setFont(titleLabel.getFont().deriveFont(Font.BOLD, FONT_SIZE_TITLE));
+        header.add(titleLabel, BorderLayout.WEST);
+
+        if (trailingContent != null) {
+            trailingContent.setOpaque(false);
+            header.add(trailingContent, BorderLayout.EAST);
+        }
+
+        return header;
+    }
+
     public static void stylePrimaryButton(JButton button) {
         button.setBackground(ACCENT);
         button.setForeground(ACCENT_FOREGROUND);

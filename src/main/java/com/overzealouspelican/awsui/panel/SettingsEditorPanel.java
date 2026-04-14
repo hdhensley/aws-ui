@@ -37,6 +37,8 @@ public class SettingsEditorPanel extends JPanel {
         setLayout(new BorderLayout());
         setBackground(UITheme.panelBackground());
 
+        add(createHeader(), BorderLayout.NORTH);
+
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT);
         splitPane.setBorder(null);
         splitPane.setDividerSize(4);
@@ -49,6 +51,10 @@ public class SettingsEditorPanel extends JPanel {
 
         categoryList.setSelectedIndex(0);
         detailsCardLayout.show(detailsPanel, CATEGORY_APPEARANCE);
+    }
+
+    private JComponent createHeader() {
+        return UITheme.createPageHeader("Settings", null);
     }
 
     private JComponent createCategorySidebar() {
