@@ -5,14 +5,10 @@ import com.overzealouspelican.awsui.service.SettingsService;
 import com.overzealouspelican.awsui.util.UITheme;
 
 import javax.swing.*;
-import javax.swing.table.AbstractTableModel;
-import javax.swing.table.DefaultTableCellRenderer;
-import javax.swing.table.TableCellRenderer;
 import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 
@@ -37,12 +33,12 @@ public class EcsPanel extends JPanel {
 
     private JTextField clusterSearchField;
     private JTable clustersTable;
-    private ClusterTableModel clusterTableModel;
+    private EcsClusterTableModel clusterTableModel;
 
     private JLabel selectedClusterLabel;
     private JTextField serviceSearchField;
     private JTable servicesTable;
-    private ServiceTableModel serviceTableModel;
+    private EcsServiceTableModel serviceTableModel;
     private JTextArea serviceDetailsArea;
     private JButton forceDeployButton;
 
@@ -121,27 +117,15 @@ public class EcsPanel extends JPanel {
         filterBar.add(searchButton);
         filterBar.add(openButton);
 
-        clusterTableModel = new ClusterTableModel();
+        clusterTableModel = new EcsClusterTableModel();
         clustersTable = new JTable(clusterTableModel);
         clustersTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         clustersTable.setFillsViewportHeight(true);
         clustersTable.setRowHeight(30);
-        clustersTable.getColumnModel().getColumn(0).setCellRenderer(new LinkCellRenderer());
-        clustersTable.getColumnModel().getColumn(2).setCellRenderer(new ClusterTasksRenderer());
-        clustersTable.getColumnModel().getColumn(4).setCellRenderer(new StatusCellRenderer());
-        clustersTable.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                int row = clustersTable.rowAtPoint(e.getPoint());
-                int col = clustersTable.columnAtPoint(e.getPoint());
-                if (row >= 0 && col == 0 && e.getClickCount() >= 1) {
-                    clustersTable.setRowSelectionInterval(row, row);
-                    if (e.getClickCount() >= 2) {
-                        openSelectedCluster();
-                    }
-                }
-            }
-        });
+        clustersTable.getColumnModel().getColumn(0).setCellRenderer(new EcsLinkCellRenderer());
+        clustersTable.getColumnModel().getColumn(2).setCellRenderer(new EcsClusterTasksRenderer());
+        clustersTable.getColumnModel().getColumn(4).setCellRenderer(new EcsStatusCellRenderer());
+        installClusterTableInteraction();
 
         searchButton.addActionListener(e -> refreshClusters());
         clusterSearchField.addActionListener(e -> refreshClusters());
@@ -180,38 +164,18 @@ public class EcsPanel extends JPanel {
         serviceSearchField.addActionListener(e -> refreshServices());
         filterBar.add(searchButton);
 
-        serviceTableModel = new ServiceTableModel();
+        serviceTableModel = new EcsServiceTableModel();
         servicesTable = new JTable(serviceTableModel);
         servicesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         servicesTable.setFillsViewportHeight(true);
         servicesTable.setRowHeight(30);
-        servicesTable.getColumnModel().getColumn(0).setCellRenderer(new LinkCellRenderer());
-        servicesTable.getColumnModel().getColumn(1).setCellRenderer(new StatusCellRenderer());
-        servicesTable.getColumnModel().getColumn(4).setCellRenderer(new LinkCellRenderer());
-        servicesTable.getColumnModel().getColumn(5).setCellRenderer(new DeploymentStatusRenderer());
-        servicesTable.getColumnModel().getColumn(6).setCellRenderer(new ServiceTasksRenderer());
+        servicesTable.getColumnModel().getColumn(0).setCellRenderer(new EcsLinkCellRenderer());
+        servicesTable.getColumnModel().getColumn(1).setCellRenderer(new EcsStatusCellRenderer());
+        servicesTable.getColumnModel().getColumn(4).setCellRenderer(new EcsLinkCellRenderer());
+        servicesTable.getColumnModel().getColumn(5).setCellRenderer(new EcsStatusCellRenderer());
+        servicesTable.getColumnModel().getColumn(6).setCellRenderer(new EcsServiceTasksRenderer());
         servicesTable.getSelectionModel().addListSelectionListener(e -> updateServiceDetails());
-        servicesTable.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                int row = servicesTable.rowAtPoint(e.getPoint());
-                int col = servicesTable.columnAtPoint(e.getPoint());
-                if (row < 0 || col < 0) {
-                    return;
-                }
-
-                servicesTable.setRowSelectionInterval(row, row);
-                int modelRow = servicesTable.convertRowIndexToModel(row);
-                EcsService.ServiceRow serviceRow = serviceTableModel.getRow(modelRow);
-
-                if (col == 4) {
-                    copyToClipboard(serviceRow.taskDefinition());
-                    setStatus("Copied task definition: " + serviceRow.taskDefinition());
-                } else if (col == 0 && e.getClickCount() >= 1) {
-                    updateServiceDetails();
-                }
-            }
-        });
+        installServiceTableInteraction();
 
         serviceDetailsArea = new JTextArea();
         serviceDetailsArea.setEditable(false);
@@ -303,6 +267,28 @@ public class EcsPanel extends JPanel {
         refreshServices();
     }
 
+    private void installClusterTableInteraction() {
+        clustersTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                handleClusterTableClick(event);
+            }
+        });
+    }
+
+    private void handleClusterTableClick(MouseEvent event) {
+        int row = clustersTable.rowAtPoint(event.getPoint());
+        int column = clustersTable.columnAtPoint(event.getPoint());
+        if (row < 0 || column != 0) {
+            return;
+        }
+
+        clustersTable.setRowSelectionInterval(row, row);
+        if (event.getClickCount() >= 2) {
+            openSelectedCluster();
+        }
+    }
+
     private void refreshServices() {
         if (currentProfile == null || currentProfile.isBlank()) {
             setStatus("No profile selected");
@@ -350,6 +336,40 @@ public class EcsPanel extends JPanel {
         }.execute();
     }
 
+    private void installServiceTableInteraction() {
+        servicesTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent event) {
+                handleServiceTableClick(event);
+            }
+        });
+    }
+
+    private void handleServiceTableClick(MouseEvent event) {
+        int row = servicesTable.rowAtPoint(event.getPoint());
+        int column = servicesTable.columnAtPoint(event.getPoint());
+        if (row < 0 || column < 0) {
+            return;
+        }
+
+        servicesTable.setRowSelectionInterval(row, row);
+        EcsService.ServiceRow serviceRow = serviceTableModel.getRow(servicesTable.convertRowIndexToModel(row));
+
+        if (column == 4) {
+            copyTaskDefinition(serviceRow);
+            return;
+        }
+
+        if (column == 0 && event.getClickCount() >= 1) {
+            updateServiceDetails();
+        }
+    }
+
+    private void copyTaskDefinition(EcsService.ServiceRow serviceRow) {
+        copyToClipboard(serviceRow.taskDefinition());
+        setStatus("Copied task definition: " + serviceRow.taskDefinition());
+    }
+
     private void updateServiceDetails() {
         int selectedRow = servicesTable.getSelectedRow();
         if (selectedRow < 0) {
@@ -361,17 +381,7 @@ public class EcsPanel extends JPanel {
         EcsService.ServiceRow row = serviceTableModel.getRow(servicesTable.convertRowIndexToModel(selectedRow));
         forceDeployButton.setEnabled(true);
 
-        String details = "Service: " + row.name() + System.lineSeparator()
-            + "ARN: " + row.arn() + System.lineSeparator()
-            + "Status: " + row.status() + System.lineSeparator()
-            + "Launch Type: " + row.launchType() + System.lineSeparator()
-            + "Scheduling: " + row.schedulingStrategy() + System.lineSeparator()
-            + "Task Definition: " + row.taskDefinition() + System.lineSeparator()
-            + "Deployments: " + row.deploymentStatus() + System.lineSeparator()
-            + "Last Deployment: " + row.lastDeploymentAt() + System.lineSeparator()
-            + "Tasks: desired=" + row.desiredCount() + ", running=" + row.runningCount() + ", pending=" + row.pendingCount() + System.lineSeparator()
-            + "Created At: " + row.createdAt();
-        serviceDetailsArea.setText(details);
+        serviceDetailsArea.setText(EcsServiceDetailsFormatter.format(row));
         serviceDetailsArea.setCaretPosition(0);
     }
 
@@ -457,198 +467,4 @@ public class EcsPanel extends JPanel {
         Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(value), null);
     }
 
-    private static class LinkCellRenderer extends DefaultTableCellRenderer {
-        @Override
-        public Component getTableCellRendererComponent(
-                JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            setText(value == null ? "" : String.valueOf(value));
-            setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            return this;
-        }
-    }
-
-    private static class StatusCellRenderer extends DefaultTableCellRenderer {
-        private static final Color GREEN = new Color(22, 135, 84);
-        private static final Color ORANGE = new Color(198, 120, 35);
-
-        @Override
-        public Component getTableCellRendererComponent(
-                JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            String text = String.valueOf(value);
-            if (!isSelected) {
-                if ("ACTIVE".equalsIgnoreCase(text) || "COMPLETED".equalsIgnoreCase(text)) {
-                    setForeground(GREEN);
-                } else if (text.toUpperCase().contains("PROGRESS") || text.toUpperCase().contains("PRIMARY")) {
-                    setForeground(ORANGE);
-                } else {
-                    setForeground(table.getForeground());
-                }
-            }
-            return this;
-        }
-    }
-
-    private static class DeploymentStatusRenderer extends StatusCellRenderer {
-    }
-
-    private static class ClusterTasksRenderer extends JPanel implements TableCellRenderer {
-        private final JProgressBar progressBar = new JProgressBar();
-        private final JLabel label = new JLabel();
-        private final JPanel progressWrapper = new JPanel(new GridBagLayout());
-
-        ClusterTasksRenderer() {
-            setLayout(new BorderLayout(UITheme.SPACING_SM, 0));
-            setOpaque(true);
-            progressBar.setStringPainted(false);
-            progressBar.setPreferredSize(new Dimension(140, 8));
-            progressBar.setMinimumSize(new Dimension(80, 8));
-            progressWrapper.setOpaque(false);
-            progressWrapper.add(progressBar);
-            add(progressWrapper, BorderLayout.CENTER);
-            add(label, BorderLayout.EAST);
-        }
-
-        @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            ClusterTableModel model = (ClusterTableModel) table.getModel();
-            EcsService.ClusterRow cluster = model.getRow(table.convertRowIndexToModel(row));
-            int total = cluster.runningTasks() + cluster.pendingTasks();
-            progressBar.setMaximum(Math.max(total, 1));
-            progressBar.setValue(cluster.runningTasks());
-            progressBar.setForeground(new Color(34, 148, 83));
-            label.setText(cluster.pendingTasks() + " Pending | " + cluster.runningTasks() + " Running");
-            setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-            progressWrapper.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-            label.setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
-            return this;
-        }
-    }
-
-    private static class ServiceTasksRenderer extends JPanel implements TableCellRenderer {
-        private final JProgressBar progressBar = new JProgressBar();
-        private final JLabel label = new JLabel();
-        private final JPanel progressWrapper = new JPanel(new GridBagLayout());
-
-        ServiceTasksRenderer() {
-            setLayout(new BorderLayout(UITheme.SPACING_SM, 0));
-            setOpaque(true);
-            progressBar.setStringPainted(false);
-            progressBar.setPreferredSize(new Dimension(140, 8));
-            progressBar.setMinimumSize(new Dimension(80, 8));
-            progressWrapper.setOpaque(false);
-            progressWrapper.add(progressBar);
-            add(progressWrapper, BorderLayout.CENTER);
-            add(label, BorderLayout.EAST);
-        }
-
-        @Override
-        public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
-            ServiceTableModel model = (ServiceTableModel) table.getModel();
-            EcsService.ServiceRow service = model.getRow(table.convertRowIndexToModel(row));
-            int desired = Math.max(service.desiredCount(), 1);
-            progressBar.setMaximum(desired);
-            progressBar.setValue(Math.min(service.runningCount(), desired));
-            progressBar.setForeground(new Color(34, 148, 83));
-            label.setText(service.runningCount() + "/" + service.desiredCount() + " Tasks running");
-            setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-            progressWrapper.setBackground(isSelected ? table.getSelectionBackground() : table.getBackground());
-            label.setForeground(isSelected ? table.getSelectionForeground() : table.getForeground());
-            return this;
-        }
-    }
-
-    private static class ClusterTableModel extends AbstractTableModel {
-        private static final String[] COLUMNS = {
-            "Cluster", "Services", "Tasks", "Container instances", "Status"
-        };
-        private List<EcsService.ClusterRow> rows = new ArrayList<>();
-
-        void setRows(List<EcsService.ClusterRow> newRows) {
-            rows = new ArrayList<>(newRows);
-            fireTableDataChanged();
-        }
-
-        EcsService.ClusterRow getRow(int modelRow) {
-            return rows.get(modelRow);
-        }
-
-        @Override
-        public int getRowCount() {
-            return rows.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return COLUMNS.length;
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return COLUMNS[column];
-        }
-
-        @Override
-        public Object getValueAt(int rowIndex, int columnIndex) {
-            EcsService.ClusterRow row = rows.get(rowIndex);
-            return switch (columnIndex) {
-                case 0 -> row.name();
-                case 1 -> row.activeServices();
-                case 2 -> row.pendingTasks() + " Pending | " + row.runningTasks() + " Running";
-                case 3 -> row.containerInstances();
-                case 4 -> row.status();
-                default -> "";
-            };
-        }
-    }
-
-    private static class ServiceTableModel extends AbstractTableModel {
-        private static final String[] COLUMNS = {
-            "Service", "Status", "Scheduling", "Launch", "Task definition",
-            "Deployments", "Tasks", "Created"
-        };
-        private List<EcsService.ServiceRow> rows = new ArrayList<>();
-
-        void setRows(List<EcsService.ServiceRow> newRows) {
-            rows = new ArrayList<>(newRows);
-            fireTableDataChanged();
-        }
-
-        EcsService.ServiceRow getRow(int modelRow) {
-            return rows.get(modelRow);
-        }
-
-        @Override
-        public int getRowCount() {
-            return rows.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return COLUMNS.length;
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return COLUMNS[column];
-        }
-
-        @Override
-        public Object getValueAt(int rowIndex, int columnIndex) {
-            EcsService.ServiceRow row = rows.get(rowIndex);
-            return switch (columnIndex) {
-                case 0 -> row.name();
-                case 1 -> row.status();
-                case 2 -> row.schedulingStrategy();
-                case 3 -> row.launchType();
-                case 4 -> row.taskDefinition();
-                case 5 -> row.deploymentStatus();
-                case 6 -> row.runningCount() + "/" + row.desiredCount() + " Running";
-                case 7 -> row.createdAt();
-                default -> "";
-            };
-        }
-    }
 }

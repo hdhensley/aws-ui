@@ -74,8 +74,8 @@ public class LogsPanel extends JPanel {
     private String defaultSavedFilterName;
     private JTextArea logsTextArea;
     private JTable logsTable;
-    private JsonLogsTableModel jsonLogsTableModel;
-    private TableRowSorter<JsonLogsTableModel> jsonLogsRowSorter;
+    private LogsJsonTableModel jsonLogsTableModel;
+    private TableRowSorter<LogsJsonTableModel> jsonLogsRowSorter;
     private CardLayout displayLayout;
     private JPanel displayPanel;
     private JLabel statusLabel;
@@ -220,7 +220,7 @@ public class LogsPanel extends JPanel {
         savedFiltersListModel = new DefaultListModel<>();
         savedFiltersList = new JList<>(savedFiltersListModel);
         savedFiltersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        savedFiltersList.setCellRenderer(new SavedFilterListCellRenderer());
+        savedFiltersList.setCellRenderer(new LogsSavedFilterListCellRenderer(() -> defaultSavedFilterName));
         savedFiltersList.addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -471,7 +471,7 @@ public class LogsPanel extends JPanel {
         JScrollPane textScrollPane = new JScrollPane(logsTextArea);
         textScrollPane.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
 
-        jsonLogsTableModel = new JsonLogsTableModel();
+        jsonLogsTableModel = new LogsJsonTableModel();
         logsTable = new JTable(jsonLogsTableModel);
         jsonLogsRowSorter = new TableRowSorter<>(jsonLogsTableModel);
         logsTable.setRowSorter(jsonLogsRowSorter);
@@ -1071,7 +1071,7 @@ public class LogsPanel extends JPanel {
 
         jsonLogsRowSorter.setRowFilter(new RowFilter<>() {
             @Override
-            public boolean include(Entry<? extends JsonLogsTableModel, ? extends Integer> entry) {
+            public boolean include(Entry<? extends LogsJsonTableModel, ? extends Integer> entry) {
                 boolean streamMatches = ALL_JSON_LOG_STREAMS.equals(selectedValue)
                     || selectedValue.equals(String.valueOf(entry.getValue(logStreamColumn)));
                 if (!streamMatches) {
@@ -1323,7 +1323,7 @@ public class LogsPanel extends JPanel {
         }
     }
 
-    private record ParsedJsonRow(Map<String, String> values) {
+    record ParsedJsonRow(Map<String, String> values) {
     }
 
     private record TimeframeOption(String label, Duration duration) {
