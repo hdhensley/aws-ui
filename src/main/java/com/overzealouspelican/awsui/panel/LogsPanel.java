@@ -1,30 +1,19 @@
 package com.overzealouspelican.awsui.panel;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.overzealouspelican.awsui.service.CloudWatchLogsService;
 import com.overzealouspelican.awsui.service.SettingsService;
 import com.overzealouspelican.awsui.util.UITheme;
 
 import javax.swing.*;
-import javax.swing.table.AbstractTableModel;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.awt.datatransfer.StringSelection;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.KeyEvent;
 import java.time.Duration;
-import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.LinkedHashMap;
 import java.util.Set;
-import java.util.concurrent.ExecutionException;
 
 /**
  * CloudWatch logs viewer with searchable group/stream selectors and timeframe filter.
@@ -43,6 +32,7 @@ public class LogsPanel extends JPanel {
 
     private final CloudWatchLogsService logsService;
     private final SettingsService settingsService;
+    private final LogsAsyncWorkflow asyncWorkflow;
 
     private String currentProfile;
 
@@ -80,7 +70,7 @@ public class LogsPanel extends JPanel {
     private JPanel displayPanel;
     private JLabel statusLabel;
     private String lastRawLogs = "";
-    private List<ParsedJsonRow> lastParsedJsonRows = List.of();
+    private List<LogsParsedJsonRow> lastParsedJsonRows = List.of();
 
     private static final String DISPLAY_TEXT = "text";
     private static final String DISPLAY_TABLE = "table";
@@ -88,6 +78,7 @@ public class LogsPanel extends JPanel {
     public LogsPanel(CloudWatchLogsService logsService, SettingsService settingsService) {
         this.logsService = logsService;
         this.settingsService = settingsService;
+        this.asyncWorkflow = new LogsAsyncWorkflow(logsService, new AsyncViewImpl());
         this.currentProfile = settingsService.getSavedAwsProfile();
         initializePanel();
     }
@@ -482,7 +473,7 @@ public class LogsPanel extends JPanel {
         logsTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
         logsTable.setFillsViewportHeight(true);
         logsTable.setRowHeight(28);
-        installCopyActionForTable();
+        LogsTableClipboardSupport.installCopyAction(logsTable);
         JScrollPane tableScrollPane = new JScrollPane(logsTable);
         tableScrollPane.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
 
@@ -528,26 +519,12 @@ public class LogsPanel extends JPanel {
     }
 
     private void reloadSavedFiltersList(String selectedName) {
-        defaultSavedFilterName = settingsService.getDefaultLogsFilterName();
-        savedFiltersListModel.clear();
-        List<SettingsService.SavedLogsFilter> filters = settingsService.getSavedLogsFilters();
-        int selectedIndex = -1;
-
-        for (int i = 0; i < filters.size(); i++) {
-            SettingsService.SavedLogsFilter filter = filters.get(i);
-            savedFiltersListModel.addElement(filter);
-            if (selectedName != null && selectedName.equalsIgnoreCase(filter.getName())) {
-                selectedIndex = i;
-            }
-        }
-
-        if (selectedIndex >= 0) {
-            savedFiltersList.setSelectedIndex(selectedIndex);
-        } else if (!savedFiltersListModel.isEmpty()) {
-            savedFiltersList.setSelectedIndex(0);
-        }
-
-        savedFiltersList.repaint();
+        defaultSavedFilterName = LogsSavedFilterWorkflow.reloadSavedFiltersList(
+            settingsService,
+            savedFiltersListModel,
+            savedFiltersList,
+            selectedName
+        );
     }
 
     private void saveCurrentFilter() {
@@ -557,13 +534,13 @@ public class LogsPanel extends JPanel {
             return;
         }
 
-        String groupSearch = textOrEmpty(groupSearchField);
-        String selectedGroup = selectedGroupValue();
-        String streamSearch = textOrEmpty(streamSearchField);
-        String selectedStream = selectedStreamValue();
-        String timeframeLabel = selectedTimeframeLabel();
-        String jsonLogStream = selectedJsonLogStreamValue();
-        String clientSearch = textOrEmpty(clientSearchField);
+        String groupSearch = LogsSavedFilterWorkflow.textOrEmpty(groupSearchField);
+        String selectedGroup = LogsSavedFilterWorkflow.selectedGroupValue(groupComboBox, CHOOSE_GROUP_OPTION);
+        String streamSearch = LogsSavedFilterWorkflow.textOrEmpty(streamSearchField);
+        String selectedStream = LogsSavedFilterWorkflow.selectedStreamValue(streamComboBox);
+        String timeframeLabel = LogsSavedFilterWorkflow.selectedTimeframeLabel(timeframeComboBox);
+        String jsonLogStream = LogsSavedFilterWorkflow.selectedJsonLogStreamValue(jsonLogStreamFilterComboBox, ALL_JSON_LOG_STREAMS);
+        String clientSearch = LogsSavedFilterWorkflow.textOrEmpty(clientSearchField);
 
         settingsService.saveLogsFilter(new SettingsService.SavedLogsFilter(
             name,
@@ -625,14 +602,18 @@ public class LogsPanel extends JPanel {
         groupSearchField.setText(selected.getGroupSearch());
         streamSearchField.setText(selected.getStreamSearch());
         clientSearchField.setText(selected.getClientSearch());
-        selectTimeframeByLabel(selected.getTimeframeLabel());
+        LogsSavedFilterWorkflow.selectTimeframeByLabel(timeframeComboBox, selected.getTimeframeLabel());
 
         refreshLogGroups(() -> {
-            selectGroupByValue(selected.getSelectedGroup());
+            LogsSavedFilterWorkflow.selectGroupByValue(groupComboBox, selected.getSelectedGroup());
             refreshLogStreams(false, () -> {
-                selectStreamByName(selected.getSelectedStream());
+                LogsSavedFilterWorkflow.selectStreamByName(streamComboBox, ALL_STREAMS_OPTION, selected.getSelectedStream());
                 loadLogs(() -> {
-                    selectJsonLogStreamByValue(selected.getJsonLogStream());
+                    LogsSavedFilterWorkflow.selectJsonLogStreamByValue(
+                        jsonLogStreamFilterComboBox,
+                        ALL_JSON_LOG_STREAMS,
+                        selected.getJsonLogStream()
+                    );
                     applyClientSideSearch();
                     statusLabel.setText("Applied filter: " + selected.getName());
                     applyingSavedFilter = false;
@@ -704,102 +685,6 @@ public class LogsPanel extends JPanel {
         statusLabel.setText("Default filter cleared");
     }
 
-    private String selectedGroupValue() {
-        Object selectedGroup = groupComboBox.getSelectedItem();
-        if (!(selectedGroup instanceof String value)) {
-            return "";
-        }
-        return CHOOSE_GROUP_OPTION.equals(value) ? "" : value;
-    }
-
-    private String selectedStreamValue() {
-        Object selectedStream = streamComboBox.getSelectedItem();
-        if (!(selectedStream instanceof CloudWatchLogsService.LogStreamOption value)) {
-            return "";
-        }
-        return value.name() == null ? "" : value.name();
-    }
-
-    private String selectedTimeframeLabel() {
-        Object selectedTimeframe = timeframeComboBox.getSelectedItem();
-        return selectedTimeframe == null ? "" : selectedTimeframe.toString();
-    }
-
-    private String selectedJsonLogStreamValue() {
-        Object selectedJsonStream = jsonLogStreamFilterComboBox.getSelectedItem();
-        if (!(selectedJsonStream instanceof String value) || ALL_JSON_LOG_STREAMS.equals(value)) {
-            return "";
-        }
-        return value;
-    }
-
-    private String textOrEmpty(JTextField field) {
-        return field.getText() == null ? "" : field.getText().trim();
-    }
-
-    private void selectTimeframeByLabel(String label) {
-        if (label == null || label.isBlank()) {
-            return;
-        }
-
-        for (int i = 0; i < timeframeComboBox.getItemCount(); i++) {
-            TimeframeOption option = timeframeComboBox.getItemAt(i);
-            if (label.equals(option.toString())) {
-                timeframeComboBox.setSelectedIndex(i);
-                break;
-            }
-        }
-    }
-
-    private void selectGroupByValue(String groupName) {
-        if (groupName == null || groupName.isBlank()) {
-            return;
-        }
-
-        ComboBoxModel<String> model = groupComboBox.getModel();
-        for (int i = 0; i < model.getSize(); i++) {
-            String value = model.getElementAt(i);
-            if (groupName.equals(value)) {
-                groupComboBox.setSelectedItem(value);
-                return;
-            }
-        }
-    }
-
-    private void selectStreamByName(String streamName) {
-        if (streamName == null || streamName.isBlank()) {
-            streamComboBox.setSelectedItem(ALL_STREAMS_OPTION);
-            return;
-        }
-
-        ComboBoxModel<CloudWatchLogsService.LogStreamOption> model = streamComboBox.getModel();
-        for (int i = 0; i < model.getSize(); i++) {
-            CloudWatchLogsService.LogStreamOption option = model.getElementAt(i);
-            if (streamName.equals(option.name())) {
-                streamComboBox.setSelectedItem(option);
-                return;
-            }
-        }
-        streamComboBox.setSelectedItem(ALL_STREAMS_OPTION);
-    }
-
-    private void selectJsonLogStreamByValue(String value) {
-        if (value == null || value.isBlank()) {
-            jsonLogStreamFilterComboBox.setSelectedItem(ALL_JSON_LOG_STREAMS);
-            return;
-        }
-
-        ComboBoxModel<String> model = jsonLogStreamFilterComboBox.getModel();
-        for (int i = 0; i < model.getSize(); i++) {
-            String option = model.getElementAt(i);
-            if (value.equals(option)) {
-                jsonLogStreamFilterComboBox.setSelectedItem(option);
-                return;
-            }
-        }
-        jsonLogStreamFilterComboBox.setSelectedItem(ALL_JSON_LOG_STREAMS);
-    }
-
     private void refreshLogGroups() {
         refreshLogGroups(null);
     }
@@ -815,42 +700,8 @@ public class LogsPanel extends JPanel {
             return;
         }
 
-        setBusyState(true, "Loading log groups...");
         String query = groupSearchField == null ? "" : groupSearchField.getText();
-
-        new SwingWorker<List<String>, Void>() {
-            @Override
-            protected List<String> doInBackground() {
-                return logsService.listLogGroups(currentProfile, query);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    List<String> groups = get();
-                    DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
-                    model.addElement(CHOOSE_GROUP_OPTION);
-                    for (String group : groups) {
-                        model.addElement(group);
-                    }
-                    groupComboBox.setModel(model);
-                    groupComboBox.setSelectedIndex(0);
-                    streamComboBox.setModel(new DefaultComboBoxModel<>(new CloudWatchLogsService.LogStreamOption[]{ALL_STREAMS_OPTION}));
-                    statusLabel.setText("Groups: " + groups.size());
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    statusLabel.setText("Interrupted while loading groups");
-                } catch (ExecutionException ex) {
-                    statusLabel.setText("Failed to load groups");
-                    showError(ex.getCause() == null ? ex.getMessage() : ex.getCause().getMessage());
-                } finally {
-                    setBusyState(false, statusLabel.getText());
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                }
-            }
-        }.execute();
+        asyncWorkflow.refreshLogGroups(currentProfile, query, onComplete);
     }
 
     private void refreshLogStreams() {
@@ -879,45 +730,8 @@ public class LogsPanel extends JPanel {
             return;
         }
 
-        setBusyState(true, "Loading streams...");
         String query = streamSearchField.getText();
-
-        new SwingWorker<List<CloudWatchLogsService.LogStreamOption>, Void>() {
-            @Override
-            protected List<CloudWatchLogsService.LogStreamOption> doInBackground() {
-                return logsService.listLogStreams(currentProfile, group, query);
-            }
-
-            @Override
-            protected void done() {
-                boolean shouldAutoLoadLogs = false;
-                try {
-                    List<CloudWatchLogsService.LogStreamOption> streams = get();
-                    DefaultComboBoxModel<CloudWatchLogsService.LogStreamOption> model = new DefaultComboBoxModel<>();
-                    model.addElement(ALL_STREAMS_OPTION);
-                    for (CloudWatchLogsService.LogStreamOption stream : streams) {
-                        model.addElement(stream);
-                    }
-                    streamComboBox.setModel(model);
-                    statusLabel.setText("Streams: " + streams.size() + " (most recent first)");
-                    shouldAutoLoadLogs = true;
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    statusLabel.setText("Interrupted while loading streams");
-                } catch (ExecutionException ex) {
-                    statusLabel.setText("Failed to load streams");
-                    showError(ex.getCause() == null ? ex.getMessage() : ex.getCause().getMessage());
-                } finally {
-                    setBusyState(false, statusLabel.getText());
-                    if (loadLogsAfterRefresh && shouldAutoLoadLogs) {
-                        loadLogs();
-                    }
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                }
-            }
-        }.execute();
+        asyncWorkflow.refreshLogStreams(currentProfile, group, query, loadLogsAfterRefresh, this::loadLogs, onComplete);
     }
 
     private void loadLogs() {
@@ -946,38 +760,8 @@ public class LogsPanel extends JPanel {
 
         TimeframeOption timeframe = (TimeframeOption) timeframeComboBox.getSelectedItem();
         Duration duration = timeframe == null ? Duration.ofMinutes(10) : timeframe.duration();
-        Instant end = Instant.now();
-        Instant start = end.minus(duration);
-
-        setBusyState(true, "Loading logs...");
-        logsTextArea.setText("");
-
-        new SwingWorker<String, Void>() {
-            @Override
-            protected String doInBackground() {
-                String streamName = stream == null ? null : stream.name();
-                return logsService.getLogEvents(currentProfile, group, streamName, start, end);
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    renderLogs(get());
-                    statusLabel.setText("Loaded logs for " + timeframe);
-                } catch (InterruptedException ex) {
-                    Thread.currentThread().interrupt();
-                    statusLabel.setText("Interrupted while loading logs");
-                } catch (ExecutionException ex) {
-                    statusLabel.setText("Failed to load logs");
-                    showError(ex.getCause() == null ? ex.getMessage() : ex.getCause().getMessage());
-                } finally {
-                    setBusyState(false, statusLabel.getText());
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                }
-            }
-        }.execute();
+        String streamName = stream == null ? null : stream.name();
+        asyncWorkflow.loadLogs(currentProfile, group, streamName, duration, timeframe == null ? "" : timeframe.toString(), onComplete);
     }
 
     private void setBusyState(boolean busy, String statusText) {
@@ -1010,13 +794,13 @@ public class LogsPanel extends JPanel {
 
     private void renderLogs(String rawLogs) {
         lastRawLogs = rawLogs == null ? "" : rawLogs;
-        List<ParsedJsonRow> parsedRows = parseJsonRows(rawLogs);
+        List<LogsParsedJsonRow> parsedRows = LogsJsonParser.parseJsonRows(rawLogs);
         lastParsedJsonRows = parsedRows;
         if (!parsedRows.isEmpty()) {
             jsonLogsTableModel.setRows(parsedRows);
             updateJsonLogStreamFilterOptions(parsedRows);
             applyJsonLogStreamFilter();
-            resizeJsonColumns();
+            LogsTableColumnAutoSizer.resizeColumns(logsTable, 100, 120, 500, 7);
             displayLayout.show(displayPanel, DISPLAY_TABLE);
             return;
         }
@@ -1025,14 +809,14 @@ public class LogsPanel extends JPanel {
         jsonLogStreamFilterComboBox.setModel(new DefaultComboBoxModel<>(new String[]{ALL_JSON_LOG_STREAMS}));
         jsonLogStreamFilterComboBox.setEnabled(false);
         jsonLogsRowSorter.setRowFilter(null);
-        logsTextArea.setText(filterTextLogs(lastRawLogs, clientSearchField.getText()));
+        logsTextArea.setText(LogsTextFilter.filterTextLogs(lastRawLogs, clientSearchField.getText()));
         logsTextArea.setCaretPosition(0);
         displayLayout.show(displayPanel, DISPLAY_TEXT);
     }
 
-    private void updateJsonLogStreamFilterOptions(List<ParsedJsonRow> parsedRows) {
+    private void updateJsonLogStreamFilterOptions(List<LogsParsedJsonRow> parsedRows) {
         Set<String> values = new LinkedHashSet<>();
-        for (ParsedJsonRow row : parsedRows) {
+        for (LogsParsedJsonRow row : parsedRows) {
             String value = row.values().get("logStream");
             if (value != null && !value.isBlank()) {
                 values.add(value);
@@ -1099,237 +883,69 @@ public class LogsPanel extends JPanel {
             return;
         }
 
-        logsTextArea.setText(filterTextLogs(lastRawLogs, clientSearchField.getText()));
+        logsTextArea.setText(LogsTextFilter.filterTextLogs(lastRawLogs, clientSearchField.getText()));
         logsTextArea.setCaretPosition(0);
-    }
-
-    private String filterTextLogs(String rawLogs, String query) {
-        if (rawLogs == null) {
-            return "";
-        }
-        if (query == null || query.isBlank()) {
-            return rawLogs;
-        }
-
-        String[] lines = rawLogs.split("\\R");
-        String needle = query.toLowerCase(Locale.ROOT);
-        StringBuilder filtered = new StringBuilder();
-        int matches = 0;
-
-        for (String line : lines) {
-            if (line.toLowerCase(Locale.ROOT).contains(needle)) {
-                filtered.append(line).append(System.lineSeparator());
-                matches++;
-            }
-        }
-
-        if (matches == 0) {
-            return "No client-side matches for: " + query;
-        }
-
-        return filtered.toString();
-    }
-
-    private void installCopyActionForTable() {
-        KeyStroke copy = KeyStroke.getKeyStroke(
-            KeyEvent.VK_C,
-            Toolkit.getDefaultToolkit().getMenuShortcutKeyMaskEx()
-        );
-        logsTable.getInputMap(JComponent.WHEN_FOCUSED).put(copy, "copyCells");
-        logsTable.getActionMap().put("copyCells", new AbstractAction() {
-            @Override
-            public void actionPerformed(java.awt.event.ActionEvent e) {
-                copySelectedTableCells();
-            }
-        });
-    }
-
-    private void copySelectedTableCells() {
-        int[] selectedRows = logsTable.getSelectedRows();
-        int[] selectedCols = logsTable.getSelectedColumns();
-        if (selectedRows.length == 0 || selectedCols.length == 0) {
-            return;
-        }
-
-        StringBuilder builder = new StringBuilder();
-        for (int r = 0; r < selectedRows.length; r++) {
-            for (int c = 0; c < selectedCols.length; c++) {
-                Object value = logsTable.getValueAt(selectedRows[r], selectedCols[c]);
-                if (value != null) {
-                    builder.append(value);
-                }
-                if (c < selectedCols.length - 1) {
-                    builder.append('\t');
-                }
-            }
-            if (r < selectedRows.length - 1) {
-                builder.append(System.lineSeparator());
-            }
-        }
-
-        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
-            new StringSelection(builder.toString()),
-            null
-        );
-    }
-
-    private List<ParsedJsonRow> parseJsonRows(String rawLogs) {
-        if (rawLogs == null || rawLogs.isBlank()) {
-            return List.of();
-        }
-
-        String[] lines = rawLogs.split("\\R");
-        List<ParsedJsonRow> rows = new ArrayList<>();
-        int nonEmptyLines = 0;
-
-        for (String line : lines) {
-            if (line == null || line.isBlank()) {
-                continue;
-            }
-
-            nonEmptyLines++;
-
-            int jsonStart = line.indexOf('{');
-            if (jsonStart < 0) {
-                continue;
-            }
-
-            String prefixTimestamp = line.substring(0, jsonStart).trim();
-            String jsonText = line.substring(jsonStart).trim();
-
-            try {
-                JsonElement element = JsonParser.parseString(jsonText);
-                if (!element.isJsonObject()) {
-                    continue;
-                }
-
-                JsonObject object = element.getAsJsonObject();
-                Map<String, String> values = new LinkedHashMap<>();
-                values.put("timestamp", prefixTimestamp);
-                for (Map.Entry<String, JsonElement> entry : object.entrySet()) {
-                    values.put(entry.getKey(), flattenJsonValue(entry.getValue()));
-                }
-                rows.add(new ParsedJsonRow(values));
-            } catch (Exception ex) {
-                // Ignore malformed lines and keep any valid JSON rows we can recover.
-            }
-        }
-
-        if (rows.isEmpty()) {
-            return List.of();
-        }
-
-        // If at least one line parsed as JSON, prefer the table view over raw text.
-        return rows;
-    }
-
-    private String flattenJsonValue(JsonElement value) {
-        if (value == null || value.isJsonNull()) {
-            return "";
-        }
-        if (value.isJsonPrimitive()) {
-            return value.getAsJsonPrimitive().getAsString();
-        }
-        return value.toString();
-    }
-
-    private void resizeJsonColumns() {
-        for (int column = 0; column < logsTable.getColumnCount(); column++) {
-            int width = 120;
-            for (int row = 0; row < Math.min(logsTable.getRowCount(), 100); row++) {
-                Object value = logsTable.getValueAt(row, column);
-                if (value != null) {
-                    width = Math.max(width, Math.min(500, value.toString().length() * 7));
-                }
-            }
-            logsTable.getColumnModel().getColumn(column).setPreferredWidth(width);
-        }
-    }
-
-    private static class JsonLogsTableModel extends AbstractTableModel {
-        private List<String> columns = List.of();
-        private List<ParsedJsonRow> rows = List.of();
-
-        void setRows(List<ParsedJsonRow> newRows) {
-            rows = newRows;
-            Set<String> discoveredColumns = new LinkedHashSet<>();
-            discoveredColumns.add("timestamp");
-            discoveredColumns.add("@timestamp");
-            discoveredColumns.add("log.level");
-            discoveredColumns.add("message");
-            discoveredColumns.add("log.logger");
-            discoveredColumns.add("process.thread.name");
-            discoveredColumns.add("logStream");
-            for (ParsedJsonRow row : newRows) {
-                discoveredColumns.addAll(row.values().keySet());
-            }
-            columns = new ArrayList<>();
-            for (String column : discoveredColumns) {
-                boolean exists = newRows.stream().anyMatch(row -> row.values().containsKey(column));
-                if (exists || "timestamp".equals(column)) {
-                    columns.add(column);
-                }
-            }
-            fireTableStructureChanged();
-        }
-
-        void clear() {
-            columns = List.of();
-            rows = List.of();
-            fireTableStructureChanged();
-        }
-
-        @Override
-        public int getRowCount() {
-            return rows.size();
-        }
-
-        @Override
-        public int getColumnCount() {
-            return columns.size();
-        }
-
-        @Override
-        public String getColumnName(int column) {
-            return columns.get(column);
-        }
-
-        @Override
-        public Object getValueAt(int rowIndex, int columnIndex) {
-            return rows.get(rowIndex).values().getOrDefault(columns.get(columnIndex), "");
-        }
-
-        int getColumnIndex(String columnName) {
-            return columns.indexOf(columnName);
-        }
-    }
-
-    private class SavedFilterListCellRenderer extends DefaultListCellRenderer {
-        @Override
-        public Component getListCellRendererComponent(
-            JList<?> list,
-            Object value,
-            int index,
-            boolean isSelected,
-            boolean cellHasFocus
-        ) {
-            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
-            if (value instanceof SettingsService.SavedLogsFilter filter) {
-                boolean isDefault = defaultSavedFilterName != null
-                    && defaultSavedFilterName.equalsIgnoreCase(filter.getName());
-                label.setText(isDefault ? filter.getName() + " (default)" : filter.getName());
-            }
-            return label;
-        }
-    }
-
-    record ParsedJsonRow(Map<String, String> values) {
     }
 
     private record TimeframeOption(String label, Duration duration) {
         @Override
         public String toString() {
             return label;
+        }
+    }
+
+    private final class AsyncViewImpl implements LogsAsyncWorkflow.AsyncView {
+        @Override
+        public void setBusyState(boolean busy, String statusText) {
+            LogsPanel.this.setBusyState(busy, statusText);
+        }
+
+        @Override
+        public void setStatus(String text) {
+            statusLabel.setText(text);
+        }
+
+        @Override
+        public String currentStatusText() {
+            return statusLabel.getText();
+        }
+
+        @Override
+        public void showError(String message) {
+            LogsPanel.this.showError(message);
+        }
+
+        @Override
+        public void onGroupsLoaded(List<String> groups) {
+            DefaultComboBoxModel<String> model = new DefaultComboBoxModel<>();
+            model.addElement(CHOOSE_GROUP_OPTION);
+            for (String group : groups) {
+                model.addElement(group);
+            }
+            groupComboBox.setModel(model);
+            groupComboBox.setSelectedIndex(0);
+            streamComboBox.setModel(new DefaultComboBoxModel<>(new CloudWatchLogsService.LogStreamOption[]{ALL_STREAMS_OPTION}));
+        }
+
+        @Override
+        public void onStreamsLoaded(List<CloudWatchLogsService.LogStreamOption> streams) {
+            DefaultComboBoxModel<CloudWatchLogsService.LogStreamOption> model = new DefaultComboBoxModel<>();
+            model.addElement(ALL_STREAMS_OPTION);
+            for (CloudWatchLogsService.LogStreamOption stream : streams) {
+                model.addElement(stream);
+            }
+            streamComboBox.setModel(model);
+        }
+
+        @Override
+        public void beforeLogsLoad() {
+            logsTextArea.setText("");
+        }
+
+        @Override
+        public void onLogsLoaded(String rawLogs, String timeframeLabel) {
+            renderLogs(rawLogs);
+            statusLabel.setText("Loaded logs for " + timeframeLabel);
         }
     }
 }

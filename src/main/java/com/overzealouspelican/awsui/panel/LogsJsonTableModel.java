@@ -8,9 +8,9 @@ import java.util.Set;
 
 final class LogsJsonTableModel extends AbstractTableModel {
     private List<String> columns = List.of();
-    private List<LogsPanel.ParsedJsonRow> rows = List.of();
+    private List<LogsParsedJsonRow> rows = List.of();
 
-    void setRows(List<LogsPanel.ParsedJsonRow> newRows) {
+    void setRows(List<LogsParsedJsonRow> newRows) {
         rows = newRows;
         Set<String> discoveredColumns = new LinkedHashSet<>();
         discoveredColumns.add("timestamp");
@@ -20,7 +20,7 @@ final class LogsJsonTableModel extends AbstractTableModel {
         discoveredColumns.add("log.logger");
         discoveredColumns.add("process.thread.name");
         discoveredColumns.add("logStream");
-        for (LogsPanel.ParsedJsonRow row : newRows) {
+        for (LogsParsedJsonRow row : newRows) {
             discoveredColumns.addAll(row.values().keySet());
         }
         columns = new ArrayList<>();
