@@ -55,20 +55,6 @@ That workflow:
 - signs and notarizes the macOS DMG
 - creates a GitHub Release and attaches the generated artifacts
 
-## Required GitHub Secrets
-
-macOS signing and notarization require these repository secrets:
-
-- `MACOS_CERTIFICATE`
-- `MACOS_CERTIFICATE_PWD`
-- `KEYCHAIN_PASSWORD`
-- `MACOS_DEVELOPER_ID`
-- `APPLE_ID`
-- `APPLE_TEAM_ID`
-- `APPLE_APP_PASSWORD`
-
-Without those secrets, the macOS job will fail during signing or notarization.
-
 ## Release Notes
 
 Release versions are taken from the Git tag name after the leading `v`.

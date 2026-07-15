@@ -7,9 +7,7 @@ import com.overzealouspelican.awsui.util.UITheme;
 import javax.swing.*;
 import javax.swing.table.TableRowSorter;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -33,6 +31,8 @@ public class LogsPanel extends JPanel {
     private final CloudWatchLogsService logsService;
     private final SettingsService settingsService;
     private final LogsAsyncWorkflow asyncWorkflow;
+    private LogsSavedFilterCoordinator savedFilterCoordinator;
+    private LogsCommandController commandController;
 
     private String currentProfile;
 
@@ -40,7 +40,7 @@ public class LogsPanel extends JPanel {
     private JTextField streamSearchField;
     private JComboBox<String> groupComboBox;
     private JComboBox<CloudWatchLogsService.LogStreamOption> streamComboBox;
-    private JComboBox<TimeframeOption> timeframeComboBox;
+    private JComboBox<LogsTimeframeOption> timeframeComboBox;
     private JButton refreshGroupsButton;
     private JButton refreshStreamsButton;
     private JButton loadLogsButton;
@@ -93,7 +93,7 @@ public class LogsPanel extends JPanel {
     }
 
     public void refresh() {
-        applyDefaultSavedFilterOrRefresh();
+        savedFilterCoordinator.applyDefaultSavedFilterOrRefresh();
     }
 
     private void resetFiltersForProfileChange() {
@@ -148,8 +148,45 @@ public class LogsPanel extends JPanel {
 
         add(createHeader(), BorderLayout.NORTH);
         add(createMainContent(), BorderLayout.CENTER);
+        initializeCoordinators();
 
         refreshLogGroups();
+    }
+
+    private void initializeCoordinators() {
+        savedFilterCoordinator = new LogsSavedFilterCoordinator(
+            settingsService,
+            groupSearchField,
+            streamSearchField,
+            groupComboBox,
+            streamComboBox,
+            timeframeComboBox,
+            jsonLogStreamFilterComboBox,
+            clientSearchField,
+            filterNameField,
+            savedFiltersList,
+            savedFiltersListModel,
+            CHOOSE_GROUP_OPTION,
+            ALL_JSON_LOG_STREAMS,
+            ALL_STREAMS_OPTION,
+            this::showError,
+            this::setStatus,
+            this::applyClientSideSearch,
+            this::refreshLogGroups,
+            this::refreshLogStreams,
+            this::loadLogs,
+            () -> savedFiltersList.repaint(),
+            value -> applyingSavedFilter = value,
+            () -> defaultSavedFilterName,
+            value -> defaultSavedFilterName = value
+        );
+
+        commandController = new LogsCommandController(
+            asyncWorkflow,
+            CHOOSE_GROUP_OPTION,
+            this::setStatus,
+            this::showError
+        );
     }
 
     private JComponent createHeader() {
@@ -179,77 +216,27 @@ public class LogsPanel extends JPanel {
     }
 
     private JComponent createSavedFiltersGutter() {
-        savedFiltersGutter = new JPanel(new BorderLayout());
-        savedFiltersGutter.setBackground(UITheme.panelBackground());
-        savedFiltersGutter.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, UIManager.getColor("Component.borderColor")));
-        savedFiltersGutter.setPreferredSize(new Dimension(SAVED_FILTERS_WIDTH_EXPANDED, 0));
-        savedFiltersGutter.setMinimumSize(new Dimension(SAVED_FILTERS_WIDTH_COLLAPSED, 0));
+        LogsSavedFiltersView view = new LogsSavedFiltersView(
+            SAVED_FILTERS_WIDTH_EXPANDED,
+            SAVED_FILTERS_WIDTH_COLLAPSED,
+            () -> defaultSavedFilterName,
+            this::applySelectedSavedFilter,
+            this::deleteSelectedSavedFilter,
+            this::toggleSavedFiltersCollapsed,
+            this::showSavedFilterContextMenuIfNeeded
+        );
 
-        JPanel header = new JPanel(new BorderLayout());
-        header.setOpaque(false);
-        header.setBorder(BorderFactory.createEmptyBorder(UITheme.SPACING_SM, UITheme.SPACING_SM, UITheme.SPACING_SM, UITheme.SPACING_SM));
+        savedFiltersGutter = view.gutter;
+        savedFiltersCollapsedIcon = view.collapsedIcon;
+        savedFiltersTitleLabel = view.titleLabel;
+        toggleSavedFiltersButton = view.toggleButton;
+        savedFiltersContentPanel = view.contentPanel;
+        savedFiltersListModel = view.listModel;
+        savedFiltersList = view.list;
+        applySavedFilterButton = view.applyButton;
+        deleteSavedFilterButton = view.deleteButton;
 
-        savedFiltersCollapsedIcon = UIManager.getIcon("FileView.directoryIcon");
-        if (savedFiltersCollapsedIcon == null) {
-            savedFiltersCollapsedIcon = UIManager.getIcon("OptionPane.informationIcon");
-        }
-
-        savedFiltersTitleLabel = new JLabel("Saved Filters");
-        savedFiltersTitleLabel.setFont(savedFiltersTitleLabel.getFont().deriveFont(Font.BOLD, UITheme.FONT_SIZE_SM));
-
-        toggleSavedFiltersButton = new JButton("<");
-        toggleSavedFiltersButton.setMargin(new Insets(2, 8, 2, 8));
-        toggleSavedFiltersButton.addActionListener(e -> toggleSavedFiltersCollapsed());
-
-        header.add(savedFiltersTitleLabel, BorderLayout.WEST);
-        header.add(toggleSavedFiltersButton, BorderLayout.EAST);
-
-        savedFiltersContentPanel = new JPanel(new BorderLayout(UITheme.SPACING_SM, UITheme.SPACING_SM));
-        savedFiltersContentPanel.setOpaque(false);
-        savedFiltersContentPanel.setBorder(BorderFactory.createEmptyBorder(0, UITheme.SPACING_SM, UITheme.SPACING_SM, UITheme.SPACING_SM));
-
-        savedFiltersListModel = new DefaultListModel<>();
-        savedFiltersList = new JList<>(savedFiltersListModel);
-        savedFiltersList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        savedFiltersList.setCellRenderer(new LogsSavedFilterListCellRenderer(() -> defaultSavedFilterName));
-        savedFiltersList.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseClicked(MouseEvent e) {
-                if (e.getClickCount() == 2) {
-                    applySelectedSavedFilter();
-                }
-            }
-
-            @Override
-            public void mousePressed(MouseEvent e) {
-                showSavedFilterContextMenuIfNeeded(e);
-            }
-
-            @Override
-            public void mouseReleased(MouseEvent e) {
-                showSavedFilterContextMenuIfNeeded(e);
-            }
-        });
-
-        JScrollPane listScrollPane = new JScrollPane(savedFiltersList);
-        listScrollPane.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
-
-        JPanel actions = new JPanel(new GridLayout(1, 2, UITheme.SPACING_SM, 0));
-        actions.setOpaque(false);
-        applySavedFilterButton = new JButton("Apply");
-        applySavedFilterButton.addActionListener(e -> applySelectedSavedFilter());
-        deleteSavedFilterButton = new JButton("Delete");
-        deleteSavedFilterButton.addActionListener(e -> deleteSelectedSavedFilter());
-        actions.add(applySavedFilterButton);
-        actions.add(deleteSavedFilterButton);
-
-        savedFiltersContentPanel.add(listScrollPane, BorderLayout.CENTER);
-        savedFiltersContentPanel.add(actions, BorderLayout.SOUTH);
-
-        savedFiltersGutter.add(header, BorderLayout.NORTH);
-        savedFiltersGutter.add(savedFiltersContentPanel, BorderLayout.CENTER);
-
-        reloadSavedFiltersList(null);
+        savedFilterCoordinator.reloadSavedFiltersList(null);
         return savedFiltersGutter;
     }
 
@@ -273,214 +260,39 @@ public class LogsPanel extends JPanel {
     }
 
     private JComponent createFilterBar() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        panel.setBackground(UITheme.panelBackground());
-
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.insets = new Insets(0, 0, UITheme.SPACING_SM, UITheme.SPACING_SM);
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-
-        // Log group search + select
-        gbc.gridx = 0;
-        gbc.gridy = 0;
-        gbc.weightx = 0;
-        panel.add(new JLabel("Log Group Search:"), gbc);
-
-        groupSearchField = new JTextField();
-        applyStandardFilterInputSize(groupSearchField);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(groupSearchField, gbc);
-
-        refreshGroupsButton = new JButton("Find Groups");
-        applyStandardButtonSize(refreshGroupsButton);
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.anchor = GridBagConstraints.CENTER;
-        panel.add(refreshGroupsButton, gbc);
-
-        groupComboBox = new JComboBox<>();
-        applyStandardFilterInputSize(groupComboBox);
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(groupComboBox, gbc);
-
-        // Log stream search + select
-        gbc.gridx = 0;
-        gbc.gridy = 1;
-        gbc.weightx = 0;
-        panel.add(new JLabel("Log Stream Search:"), gbc);
-
-        streamSearchField = new JTextField();
-        applyStandardFilterInputSize(streamSearchField);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(streamSearchField, gbc);
-
-        refreshStreamsButton = new JButton("Find Streams");
-        applyStandardButtonSize(refreshStreamsButton);
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.anchor = GridBagConstraints.CENTER;
-        panel.add(refreshStreamsButton, gbc);
-
-        streamComboBox = new JComboBox<>();
-        applyStandardFilterInputSize(streamComboBox);
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(streamComboBox, gbc);
-
-        // Timeframe + load logs
-        gbc.gridx = 0;
-        gbc.gridy = 2;
-        gbc.weightx = 0;
-        gbc.insets = new Insets(0, 0, 0, UITheme.SPACING_SM);
-        panel.add(new JLabel("Timeframe:"), gbc);
-
-        timeframeComboBox = new JComboBox<>(new TimeframeOption[]{
-            new TimeframeOption("Last 1 minute", Duration.ofMinutes(1)),
-            new TimeframeOption("Last 5 minutes", Duration.ofMinutes(5)),
-            new TimeframeOption("Last 10 minutes", Duration.ofMinutes(10)),
-            new TimeframeOption("Last 30 minutes", Duration.ofMinutes(30)),
-            new TimeframeOption("Last 60 minutes", Duration.ofMinutes(60)),
-            new TimeframeOption("Last 6 hours", Duration.ofHours(6)),
-            new TimeframeOption("Last 24 hours", Duration.ofHours(24))
-        });
-        applyStandardFilterInputSize(timeframeComboBox);
-        timeframeComboBox.setSelectedIndex(2);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(timeframeComboBox, gbc);
-
-        loadLogsButton = new JButton("Load Logs");
-        UITheme.stylePrimaryButton(loadLogsButton);
-        applyStandardButtonSize(loadLogsButton);
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.anchor = GridBagConstraints.CENTER;
-        panel.add(loadLogsButton, gbc);
-
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 3;
-        gbc.weightx = 0;
-        gbc.insets = new Insets(UITheme.SPACING_SM, 0, 0, UITheme.SPACING_SM);
-        panel.add(new JLabel("JSON logStream:"), gbc);
-
-        jsonLogStreamFilterComboBox = new JComboBox<>(new String[]{ALL_JSON_LOG_STREAMS});
-        jsonLogStreamFilterComboBox.setEnabled(false);
-        applyStandardFilterInputSize(jsonLogStreamFilterComboBox);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(jsonLogStreamFilterComboBox, gbc);
-
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_BUTTON_SIZE.width), gbc);
-
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 4;
-        gbc.weightx = 0;
-        gbc.insets = new Insets(UITheme.SPACING_SM, 0, 0, UITheme.SPACING_SM);
-        panel.add(new JLabel("Client Search:"), gbc);
-
-        clientSearchField = new JTextField();
-        applyStandardFilterInputSize(clientSearchField);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(clientSearchField, gbc);
-
-        JPanel searchButtonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, UITheme.SPACING_SM, 0));
-        searchButtonsPanel.setOpaque(false);
-        applyClientSearchButton = new JButton("Apply Search");
-        clearClientSearchButton = new JButton("Clear Search");
-        searchButtonsPanel.add(applyClientSearchButton);
-        searchButtonsPanel.add(clearClientSearchButton);
-
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.anchor = GridBagConstraints.CENTER;
-        panel.add(searchButtonsPanel, gbc);
-
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
-
-        gbc.gridx = 0;
-        gbc.gridy = 5;
-        gbc.weightx = 0;
-        gbc.insets = new Insets(UITheme.SPACING_SM, 0, 0, UITheme.SPACING_SM);
-        panel.add(new JLabel("Filter Name:"), gbc);
-
-        filterNameField = new JTextField();
-        applyStandardFilterInputSize(filterNameField);
-        gbc.gridx = 1;
-        gbc.weightx = 0.5;
-        panel.add(filterNameField, gbc);
-
-        saveFilterButton = new JButton("Save Filter");
-        applyStandardButtonSize(saveFilterButton);
-        gbc.gridx = 2;
-        gbc.weightx = 0;
-        gbc.anchor = GridBagConstraints.CENTER;
-        panel.add(saveFilterButton, gbc);
-
-        gbc.gridx = 3;
-        gbc.weightx = 0.5;
-        panel.add(Box.createHorizontalStrut(STANDARD_FILTER_INPUT_SIZE.width), gbc);
+        LogsFilterBarView view = new LogsFilterBarView(
+            STANDARD_FILTER_INPUT_SIZE,
+            STANDARD_FILTER_BUTTON_SIZE,
+            ALL_JSON_LOG_STREAMS
+        );
+        groupSearchField = view.groupSearchField;
+        refreshGroupsButton = view.refreshGroupsButton;
+        groupComboBox = view.groupComboBox;
+        streamSearchField = view.streamSearchField;
+        refreshStreamsButton = view.refreshStreamsButton;
+        streamComboBox = view.streamComboBox;
+        timeframeComboBox = view.timeframeComboBox;
+        loadLogsButton = view.loadLogsButton;
+        jsonLogStreamFilterComboBox = view.jsonLogStreamFilterComboBox;
+        clientSearchField = view.clientSearchField;
+        applyClientSearchButton = view.applyClientSearchButton;
+        clearClientSearchButton = view.clearClientSearchButton;
+        filterNameField = view.filterNameField;
+        saveFilterButton = view.saveFilterButton;
 
         wireActions();
-        return panel;
-    }
-
-    private void applyStandardFilterInputSize(JComponent component) {
-        component.setPreferredSize(STANDARD_FILTER_INPUT_SIZE);
-        component.setMinimumSize(STANDARD_FILTER_INPUT_SIZE);
-    }
-
-    private void applyStandardButtonSize(AbstractButton button) {
-        button.setPreferredSize(STANDARD_FILTER_BUTTON_SIZE);
-        button.setMinimumSize(STANDARD_FILTER_BUTTON_SIZE);
+        return view.panel;
     }
 
     private JComponent createLogsDisplay() {
-        displayLayout = new CardLayout();
-        displayPanel = new JPanel(displayLayout);
-
-        logsTextArea = new JTextArea();
-        logsTextArea.setEditable(false);
-        logsTextArea.setLineWrap(false);
-        logsTextArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
-
-        JScrollPane textScrollPane = new JScrollPane(logsTextArea);
-        textScrollPane.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
-
-        jsonLogsTableModel = new LogsJsonTableModel();
-        logsTable = new JTable(jsonLogsTableModel);
-        jsonLogsRowSorter = new TableRowSorter<>(jsonLogsTableModel);
-        logsTable.setRowSorter(jsonLogsRowSorter);
-        logsTable.setCellSelectionEnabled(true);
-        logsTable.setRowSelectionAllowed(true);
-        logsTable.setColumnSelectionAllowed(true);
-        logsTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-        logsTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        logsTable.setFillsViewportHeight(true);
-        logsTable.setRowHeight(28);
-        LogsTableClipboardSupport.installCopyAction(logsTable);
-        JScrollPane tableScrollPane = new JScrollPane(logsTable);
-        tableScrollPane.setBorder(BorderFactory.createLineBorder(UIManager.getColor("Component.borderColor")));
-
-        displayPanel.add(textScrollPane, DISPLAY_TEXT);
-        displayPanel.add(tableScrollPane, DISPLAY_TABLE);
-        displayLayout.show(displayPanel, DISPLAY_TEXT);
-        return displayPanel;
+        LogsDisplayView view = new LogsDisplayView(DISPLAY_TEXT, DISPLAY_TABLE);
+        displayLayout = view.layout;
+        displayPanel = view.panel;
+        logsTextArea = view.logsTextArea;
+        logsTable = view.logsTable;
+        jsonLogsTableModel = view.tableModel;
+        jsonLogsRowSorter = view.rowSorter;
+        return view.panel;
     }
 
     private void wireActions() {
@@ -518,127 +330,16 @@ public class LogsPanel extends JPanel {
         });
     }
 
-    private void reloadSavedFiltersList(String selectedName) {
-        defaultSavedFilterName = LogsSavedFilterWorkflow.reloadSavedFiltersList(
-            settingsService,
-            savedFiltersListModel,
-            savedFiltersList,
-            selectedName
-        );
-    }
-
     private void saveCurrentFilter() {
-        String name = filterNameField.getText() == null ? "" : filterNameField.getText().trim();
-        if (name.isBlank()) {
-            showError("Enter a filter name before saving.");
-            return;
-        }
-
-        String groupSearch = LogsSavedFilterWorkflow.textOrEmpty(groupSearchField);
-        String selectedGroup = LogsSavedFilterWorkflow.selectedGroupValue(groupComboBox, CHOOSE_GROUP_OPTION);
-        String streamSearch = LogsSavedFilterWorkflow.textOrEmpty(streamSearchField);
-        String selectedStream = LogsSavedFilterWorkflow.selectedStreamValue(streamComboBox);
-        String timeframeLabel = LogsSavedFilterWorkflow.selectedTimeframeLabel(timeframeComboBox);
-        String jsonLogStream = LogsSavedFilterWorkflow.selectedJsonLogStreamValue(jsonLogStreamFilterComboBox, ALL_JSON_LOG_STREAMS);
-        String clientSearch = LogsSavedFilterWorkflow.textOrEmpty(clientSearchField);
-
-        settingsService.saveLogsFilter(new SettingsService.SavedLogsFilter(
-            name,
-            groupSearch,
-            selectedGroup,
-            streamSearch,
-            selectedStream,
-            timeframeLabel,
-            jsonLogStream,
-            clientSearch
-        ));
-
-        reloadSavedFiltersList(name);
-        statusLabel.setText("Saved filter: " + name);
+        savedFilterCoordinator.saveCurrentFilter();
     }
 
     private void deleteSelectedSavedFilter() {
-        SettingsService.SavedLogsFilter selected = savedFiltersList.getSelectedValue();
-        if (selected == null) {
-            showError("Select a saved filter to delete.");
-            return;
-        }
-
-        int choice = JOptionPane.showConfirmDialog(
-            this,
-            "Delete saved filter '" + selected.getName() + "'?",
-            "Delete Filter",
-            JOptionPane.YES_NO_OPTION
-        );
-        if (choice != JOptionPane.YES_OPTION) {
-            return;
-        }
-
-        settingsService.removeLogsFilter(selected.getName());
-        reloadSavedFiltersList(null);
-        statusLabel.setText("Deleted filter: " + selected.getName());
+        savedFilterCoordinator.deleteSelectedSavedFilter(this);
     }
 
     private void applySelectedSavedFilter() {
-        SettingsService.SavedLogsFilter selected = savedFiltersList.getSelectedValue();
-        if (selected == null) {
-            showError("Select a saved filter to apply.");
-            return;
-        }
-
-        applySavedFilter(selected, true);
-    }
-
-    private void applySavedFilter(SettingsService.SavedLogsFilter selected, boolean showErrorOnFailure) {
-        if (selected == null) {
-            if (showErrorOnFailure) {
-                showError("Select a saved filter to apply.");
-            }
-            return;
-        }
-
-        applyingSavedFilter = true;
-        filterNameField.setText(selected.getName());
-        groupSearchField.setText(selected.getGroupSearch());
-        streamSearchField.setText(selected.getStreamSearch());
-        clientSearchField.setText(selected.getClientSearch());
-        LogsSavedFilterWorkflow.selectTimeframeByLabel(timeframeComboBox, selected.getTimeframeLabel());
-
-        refreshLogGroups(() -> {
-            LogsSavedFilterWorkflow.selectGroupByValue(groupComboBox, selected.getSelectedGroup());
-            refreshLogStreams(false, () -> {
-                LogsSavedFilterWorkflow.selectStreamByName(streamComboBox, ALL_STREAMS_OPTION, selected.getSelectedStream());
-                loadLogs(() -> {
-                    LogsSavedFilterWorkflow.selectJsonLogStreamByValue(
-                        jsonLogStreamFilterComboBox,
-                        ALL_JSON_LOG_STREAMS,
-                        selected.getJsonLogStream()
-                    );
-                    applyClientSideSearch();
-                    statusLabel.setText("Applied filter: " + selected.getName());
-                    applyingSavedFilter = false;
-                });
-            });
-        });
-    }
-
-    private void applyDefaultSavedFilterOrRefresh() {
-        String defaultName = settingsService.getDefaultLogsFilterName();
-        if (defaultName == null || defaultName.isBlank()) {
-            refreshLogGroups();
-            return;
-        }
-
-        List<SettingsService.SavedLogsFilter> filters = settingsService.getSavedLogsFilters();
-        for (SettingsService.SavedLogsFilter filter : filters) {
-            if (defaultName.equalsIgnoreCase(filter.getName())) {
-                reloadSavedFiltersList(filter.getName());
-                applySavedFilter(filter, false);
-                return;
-            }
-        }
-
-        refreshLogGroups();
+        savedFilterCoordinator.applySelectedSavedFilter(true);
     }
 
     private void showSavedFilterContextMenuIfNeeded(MouseEvent event) {
@@ -665,24 +366,18 @@ public class LogsPanel extends JPanel {
 
         JMenuItem clearDefaultItem = new JMenuItem("Clear Default");
         clearDefaultItem.addActionListener(e -> clearDefaultSavedFilter());
-        clearDefaultItem.setEnabled(defaultSavedFilterName != null && defaultSavedFilterName.equalsIgnoreCase(selected.getName()));
+        clearDefaultItem.setEnabled(savedFilterCoordinator.isSelectedFilterDefault(selected));
         menu.add(clearDefaultItem);
 
         menu.show(savedFiltersList, event.getX(), event.getY());
     }
 
     private void setDefaultSavedFilter(SettingsService.SavedLogsFilter filter) {
-        settingsService.setDefaultLogsFilterName(filter.getName());
-        defaultSavedFilterName = filter.getName();
-        savedFiltersList.repaint();
-        statusLabel.setText("Default filter set: " + filter.getName());
+        savedFilterCoordinator.setDefaultSavedFilter(filter);
     }
 
     private void clearDefaultSavedFilter() {
-        settingsService.clearDefaultLogsFilterName();
-        defaultSavedFilterName = null;
-        savedFiltersList.repaint();
-        statusLabel.setText("Default filter cleared");
+        savedFilterCoordinator.clearDefaultSavedFilter();
     }
 
     private void refreshLogGroups() {
@@ -690,18 +385,7 @@ public class LogsPanel extends JPanel {
     }
 
     private void refreshLogGroups(Runnable onComplete) {
-        if (currentProfile == null || currentProfile.isBlank()) {
-            statusLabel.setText("No profile selected");
-            groupComboBox.setModel(new DefaultComboBoxModel<>(new String[]{CHOOSE_GROUP_OPTION}));
-            streamComboBox.setModel(new DefaultComboBoxModel<>());
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        String query = groupSearchField == null ? "" : groupSearchField.getText();
-        asyncWorkflow.refreshLogGroups(currentProfile, query, onComplete);
+        commandController.refreshLogGroups(currentProfile, groupComboBox, streamComboBox, groupSearchField, onComplete);
     }
 
     private void refreshLogStreams() {
@@ -713,25 +397,14 @@ public class LogsPanel extends JPanel {
     }
 
     private void refreshLogStreams(boolean loadLogsAfterRefresh, Runnable onComplete) {
-        if (currentProfile == null || currentProfile.isBlank()) {
-            statusLabel.setText("No profile selected");
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        String group = (String) groupComboBox.getSelectedItem();
-        if (group == null || group.isBlank() || CHOOSE_GROUP_OPTION.equals(group)) {
-            statusLabel.setText("Select a log group");
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        String query = streamSearchField.getText();
-        asyncWorkflow.refreshLogStreams(currentProfile, group, query, loadLogsAfterRefresh, this::loadLogs, onComplete);
+        commandController.refreshLogStreams(
+            currentProfile,
+            groupComboBox,
+            streamSearchField,
+            loadLogsAfterRefresh,
+            this::loadLogs,
+            onComplete
+        );
     }
 
     private void loadLogs() {
@@ -739,29 +412,7 @@ public class LogsPanel extends JPanel {
     }
 
     private void loadLogs(Runnable onComplete) {
-        if (currentProfile == null || currentProfile.isBlank()) {
-            showError("No AWS profile selected.");
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        String group = (String) groupComboBox.getSelectedItem();
-        CloudWatchLogsService.LogStreamOption stream =
-            (CloudWatchLogsService.LogStreamOption) streamComboBox.getSelectedItem();
-        if (group == null || group.isBlank() || CHOOSE_GROUP_OPTION.equals(group)) {
-            showError("Select a log group.");
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        TimeframeOption timeframe = (TimeframeOption) timeframeComboBox.getSelectedItem();
-        Duration duration = timeframe == null ? Duration.ofMinutes(10) : timeframe.duration();
-        String streamName = stream == null ? null : stream.name();
-        asyncWorkflow.loadLogs(currentProfile, group, streamName, duration, timeframe == null ? "" : timeframe.toString(), onComplete);
+        commandController.loadLogs(currentProfile, groupComboBox, streamComboBox, timeframeComboBox, onComplete);
     }
 
     private void setBusyState(boolean busy, String statusText) {
@@ -786,6 +437,10 @@ public class LogsPanel extends JPanel {
             deleteSavedFilterButton.setEnabled(!busy);
         }
         statusLabel.setText(statusText);
+    }
+
+    private void setStatus(String text) {
+        statusLabel.setText(text);
     }
 
     private void showError(String message) {
@@ -885,13 +540,6 @@ public class LogsPanel extends JPanel {
 
         logsTextArea.setText(LogsTextFilter.filterTextLogs(lastRawLogs, clientSearchField.getText()));
         logsTextArea.setCaretPosition(0);
-    }
-
-    private record TimeframeOption(String label, Duration duration) {
-        @Override
-        public String toString() {
-            return label;
-        }
     }
 
     private final class AsyncViewImpl implements LogsAsyncWorkflow.AsyncView {
